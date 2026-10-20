@@ -50,6 +50,8 @@ export pysd_trunc, pysd_log_base, pysd_xidz, pysd_zidz,
        pysd_safe, SafeArray,
        pysd_xlsx_read_constant, pysd_xlsx_read_series,
        pysd_xlsx_build_lookup_dispatch,
+       pysd_allocate_by_priority, pysd_allocate_available,
+       pysd_tab_read_series, pysd_build_tab_itp,
        pysd_export_latex,
        save_results,
        check_compat, PYSD_JL_VERSION

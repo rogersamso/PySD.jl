@@ -142,3 +142,247 @@ pysd_vector_rank(vec, dir) =
 
 pysd_get_time_value(t_now, lookup_fn, lo, hi) =
     lookup_fn(clamp(t_now, lo, hi))
+
+# ---------------------------------------------------------------------------
+# ALLOCATE BY PRIORITY
+# Implements Vensim's ALLOCATE BY PRIORITY algorithm exactly:
+# supply is distributed from highest to lowest priority with a linear
+# transition zone of width `width` before the next-lower target activates.
+# ---------------------------------------------------------------------------
+function pysd_allocate_by_priority(
+        request ::AbstractVector{<:Real},
+        priority::AbstractVector{<:Real},
+        width   ::Real,
+        supply  ::Real)
+
+    n = length(request)
+    supply = Float64(supply)
+    total_req = sum(request)
+
+    total_req <= 0.0 && return zeros(n)
+    supply >= total_req && return Float64.(collect(request))
+    supply <= 0.0      && return zeros(n)
+    width  <= 0.0      && error("pysd_allocate_by_priority: width must be positive")
+
+    # Remove zero-request targets; sort remaining by priority descending
+    nz    = findall(!=(0), request)
+    req   = Float64.(request[nz])
+    pri   = Float64.(priority[nz])
+    m     = length(req)
+    perm  = sortperm(pri, rev=true)
+    req   = req[perm];  pri = pri[perm]
+
+    out    = zeros(m)
+    # distances[i] = supply consumed by target i before target i+1 activates
+    dist   = fill(Inf, m)
+    for i in 1:m-1
+        dist[i] = min(1.0, (pri[i] - pri[i+1]) / width) * req[i]
+    end
+
+    active = falses(m);  active[1] = true
+    c_i    = 1
+    rem    = supply
+
+    while rem > 1e-14
+        act = req .* active
+        s   = sum(act)
+        s <= 0.0 && break
+        slopes = act ./ s
+
+        # supply until any active target saturates
+        dx_top = Inf
+        for i in 1:m
+            active[i] || continue
+            v = (req[i] - out[i]) / slopes[i]
+            v < dx_top && (dx_top = v)
+        end
+
+        # supply until c_i reaches its distance → next target starts
+        dx_start = Inf
+        if c_i <= m && slopes[c_i] > 0.0
+            dx_start = (dist[c_i] - out[c_i]) / slopes[c_i]
+        end
+
+        dx = min(dx_top, dx_start, rem)
+        dx = max(dx, 0.0)
+        out .+= slopes .* dx
+
+        # activate next target if its distance was reached
+        if dx >= dx_start - 1e-14 && c_i < m
+            c_i += 1
+            active[c_i] = true
+        end
+        # deactivate saturated targets
+        for i in 1:m
+            if active[i] && out[i] >= req[i] - 1e-14
+                out[i] = req[i]
+                active[i] = false
+            end
+        end
+        rem -= dx
+        rem < 0.0 && break
+    end
+
+    # Map back to full output array in original order
+    result = zeros(n)
+    result[nz] = out[invperm(perm)]
+    return result
+end
+
+# ---------------------------------------------------------------------------
+# ALLOCATE AVAILABLE
+# Implements Vensim's ALLOCATE AVAILABLE algorithm.
+# `pp` is an (n×4) matrix: columns are [pprofile, ppriority, pwidth, pextra]
+# Supported profiles: 1=rectangular, 2=triangular, 3=normal, 4=exponential.
+# The equilibrium "price" x* where sum(demand_i(x*)) = avail is found by
+# bisection over the monotone total-demand function.
+# ---------------------------------------------------------------------------
+function _pysd_demand_at_price(q0, pprofile, ppriority, pwidth, x)
+    prof = round(Int, pprofile)
+    q0   = Float64(q0)
+    if q0 <= 0.0
+        return 0.0
+    end
+    if prof == 1  # rectangular
+        lo = ppriority - pwidth / 2
+        hi = ppriority + pwidth / 2
+        x <= lo && return q0
+        x >= hi && return 0.0
+        return q0 * (1.0 - (x - lo) / pwidth)
+    elseif prof == 2  # triangular
+        lo = ppriority - pwidth / 2
+        hi = ppriority + pwidth / 2
+        x <= lo && return q0
+        x >= hi && return 0.0
+        if x < ppriority
+            return q0 * (1.0 - 2.0 * (x - lo)^2 / pwidth^2)
+        else
+            return 2.0 * q0 * (hi - x)^2 / pwidth^2
+        end
+    elseif prof == 3  # normal (uses erfc from SpecialFunctions via Symbolics)
+        # erfc(x) ≈ 2*Φ(-x*sqrt(2)) where Φ is the standard normal CDF
+        # We approximate using a rational fit (max error < 1e-7)
+        t = (x - ppriority) / (pwidth * sqrt(2.0))
+        return q0 * 0.5 * _pysd_erfc(t)
+    elseif prof == 4  # exponential
+        if x < ppriority
+            return q0 * (1.0 - 0.5 * exp((x - ppriority) / pwidth))
+        else
+            return q0 * 0.5 * exp((ppriority - x) / pwidth)
+        end
+    else
+        return 0.0  # unsupported profile
+    end
+end
+
+"""
+    pysd_tab_read_series(filepath, colname) -> (times, vals)
+
+Read a tab- or comma-separated Vensim output file and return the time series
+for the column named `colname`.  Matching is case-insensitive and
+leading/trailing whitespace is ignored.
+
+Uses only Julia Base functions (`readlines`, `split`, `strip`) — no extra packages required.
+"""
+function pysd_tab_read_series(filepath::AbstractString, colname::AbstractString)
+    sep = endswith(lowercase(filepath), ".tab") ? '\t' : ','
+    raw = readlines(filepath)
+    isempty(raw) && error("Empty file: $filepath")
+
+    header = strip.(split(raw[1], sep))
+    target = strip(colname)
+    col_idx = findfirst(h -> lowercase(h) == lowercase(target), header)
+    col_idx === nothing &&
+        error("Column '$(colname)' not found in '$(filepath)'.\nAvailable: " * join(header, ", "))
+
+    times = Float64[]
+    vals  = Float64[]
+    for line in raw[2:end]
+        stripped = strip(line)
+        isempty(stripped) && continue
+        fields = split(stripped, sep)
+        length(fields) < max(1, col_idx) && continue
+        t_str = strip(fields[1])
+        v_str = col_idx <= length(fields) ? strip(fields[col_idx]) : ""
+        isempty(t_str) && continue
+        push!(times, parse(Float64, t_str))
+        push!(vals,  isempty(v_str) ? NaN : parse(Float64, v_str))
+    end
+    return times, vals
+end
+
+"""
+    pysd_build_tab_itp(vals, times, method)
+
+Build a DataInterpolations interpolation object from `(times, vals)` using
+the Vensim interpolation `method` symbol:
+- `:interpolate` or `:raw`  → `LinearInterpolation`
+- `:hold_backward`           → `ConstantInterpolation` (hold previous value)
+- `:look_forward`            → `ConstantInterpolation(dir=:right)` (next value)
+"""
+function pysd_build_tab_itp(vals::AbstractVector, times::AbstractVector, method::Symbol)
+    if method === :hold_backward
+        return ConstantInterpolation(vals, times;
+            extrapolation_left=ExtrapolationType.Constant,
+            extrapolation_right=ExtrapolationType.Constant)
+    elseif method === :look_forward
+        return ConstantInterpolation(vals, times;
+            dir=:right,
+            extrapolation_left=ExtrapolationType.Constant,
+            extrapolation_right=ExtrapolationType.Constant)
+    else  # :interpolate, :raw
+        return LinearInterpolation(vals, times;
+            extrapolation_left=ExtrapolationType.Constant,
+            extrapolation_right=ExtrapolationType.Constant)
+    end
+end
+
+# Abramowitz & Stegun approximation for erfc (max error < 1.5e-7)
+function _pysd_erfc(x)
+    t = 1.0 / (1.0 + 0.3275911 * abs(x))
+    poly = t * (0.254829592 +
+           t * (-0.284496736 +
+           t * (1.421413741 +
+           t * (-1.453152027 +
+           t * 1.061405429))))
+    y = poly * exp(-x * x)
+    return x >= 0.0 ? y : 2.0 - y
+end
+
+function pysd_allocate_available(
+        request::AbstractVector{<:Real},
+        pp     ::AbstractMatrix{<:Real},
+        avail  ::Real)
+
+    n         = length(request)
+    avail     = Float64(avail)
+    total_req = sum(request)
+
+    total_req <= 0.0 && return zeros(n)
+    avail >= total_req && return Float64.(collect(request))
+    avail <= 0.0       && return zeros(n)
+
+    # Determine bisection bounds: xlo → all demand on, xhi → all demand off
+    xlo = minimum(pp[:, 2] .- abs.(pp[:, 3]) ./ 2) - 1e3
+    xhi = maximum(pp[:, 2] .+ abs.(pp[:, 3]) ./ 2) + 1e3
+    # Extend for normal profile (tails extend far)
+    for i in 1:n
+        round(Int, pp[i, 1]) == 3 || continue
+        xlo = min(xlo, pp[i, 2] - 8.3 * pp[i, 3])
+        xhi = max(xhi, pp[i, 2] + 8.3 * pp[i, 3])
+    end
+
+    total_demand(x) = sum(_pysd_demand_at_price(
+        request[i], pp[i,1], pp[i,2], pp[i,3], x) for i in 1:n)
+
+    # Bisection: total_demand is decreasing in x
+    for _ in 1:80
+        xmid = (xlo + xhi) / 2.0
+        total_demand(xmid) > avail ? (xlo = xmid) : (xhi = xmid)
+        abs(xhi - xlo) < 1e-12 * (abs(xlo) + abs(xhi) + 1e-14) && break
+    end
+
+    x_star = (xlo + xhi) / 2.0
+    return [_pysd_demand_at_price(request[i], pp[i,1], pp[i,2], pp[i,3], x_star)
+            for i in 1:n]
+end
