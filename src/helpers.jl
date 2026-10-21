@@ -15,14 +15,19 @@ pysd_xidz(x, y, z) = ifelse(iszero(y), z, x / y)
 
 pysd_zidz(x, y) = ifelse(iszero(y), 0.0, x / y)
 
+# What Vensim considers zero.  Times accumulated by fixed Euler steps carry
+# rounding errors, so pulses start up to SMALL_VENSIM early (as in Python PySD).
+const SMALL_VENSIM = 1e-6
+
 pysd_pulse(t_now, start, width) =
-    ifelse((t_now >= start) & (t_now < start + width), 1.0, 0.0)
+    ifelse((t_now >= start - SMALL_VENSIM) & (t_now < start + width), 1.0, 0.0)
 
 # NOTE: the Vensim parser reorders PULSE TRAIN(start, width, interval, end)
-# to CallStructure arguments (start, interval, width, end).
+# to CallStructure arguments (start, interval, width, end).  The end time is
+# excluded, as in Vensim and Python PySD.
 pysd_pulse_train(t_now, start, interval, width, end_time) =
-    ifelse((t_now >= start) & (t_now <= end_time) &
-           (mod(t_now - start, interval) < width), 1.0, 0.0)
+    ifelse((t_now >= start) & (t_now < end_time) &
+           (mod(t_now - start + SMALL_VENSIM, interval) < width), 1.0, 0.0)
 
 pysd_ramp(t_now, slope, start_time, end_time=Inf) =
     slope * max(0.0, min(t_now - start_time, end_time - start_time))
@@ -65,7 +70,9 @@ pysd_invert_matrix(m, n) = m
 
 pysd_elmcount(n) = Float64(n)
 
-pysd_power(x, y) = abs(x) ^ y * sign(x)
+# Vensim POWER, also used for `^`: x^y.  A negative base with a non-integer
+# exponent gives NaN (as numpy.power) instead of throwing a DomainError.
+pysd_power(x, y) = x < 0 && !isinteger(y) ? NaN : float(x)^y
 @register_symbolic pysd_power(x::Real, y::Real)
 
 struct SafeArray{T,N,A<:AbstractArray{T,N}} <: AbstractArray{T,N}
@@ -91,12 +98,30 @@ pysd_quantum(a, b) = ifelse(b < 1e-6, float(a), b * pysd_trunc(a / b))
 pysd_pi() = Base.MathConstants.pi
 
 # XMILE variants: Xpulse has (start, magnitude), Xramp has (slope, start)
-pysd_xpulse(t_now, start, magnitude) =
-    ifelse((t_now >= start) & (t_now < start + magnitude), magnitude, 0.0)
+# XMILE PULSE(magnitude, start[, interval]): `magnitude / time_step` during one
+# time step at `start` (and every `interval` after it), as in Python PySD.
+pysd_xpulse(t_now, start, magnitude, time_step) =
+    ifelse((t_now >= start - SMALL_VENSIM) & (t_now < start + time_step / 2),
+           magnitude / time_step, 0.0)
 
-pysd_xpulse_train(t_now, start, interval, magnitude) =
+pysd_xpulse_train(t_now, start, interval, magnitude, time_step) =
     ifelse((t_now >= start) &
-           (mod(t_now - start, interval) < magnitude), magnitude, 0.0)
+           (mod(t_now - start + SMALL_VENSIM, interval) < time_step / 2),
+           magnitude / time_step, 0.0)
+
+# Without time_step: models translated by PySD before PySD.jl 0.2.1.  Kept so
+# they still run, with their previous (non-Vensim) behaviour.
+function pysd_xpulse(t_now, start, magnitude)
+    @warn "XMILE PULSE called without the time step (model translated by an older PySD): " *
+          "results differ from Vensim; re-translate the model." maxlog = 1
+    ifelse((t_now >= start) & (t_now < start + magnitude), magnitude, 0.0)
+end
+
+function pysd_xpulse_train(t_now, start, interval, magnitude)
+    @warn "XMILE PULSE called without the time step (model translated by an older PySD): " *
+          "results differ from Vensim; re-translate the model." maxlog = 1
+    ifelse((t_now >= start) & (mod(t_now - start, interval) < magnitude), magnitude, 0.0)
+end
 
 pysd_xramp(t_now, slope, start_time) =
     slope * max(0.0, t_now - start_time)
@@ -132,10 +157,12 @@ function pysd_vector_select(sel_vec, expr_vec, miss_val, action)
     return miss_val
 end
 
+# VECTOR SORT ORDER returns 0-based positions (as Vensim and Python PySD);
+# VECTOR REORDER takes them.
 pysd_vector_sort_order(vec, dir) =
-    Float64.(ifelse(dir > 0, sortperm(vec), sortperm(vec, rev=true)))
+    Float64.(ifelse(dir > 0, sortperm(vec), sortperm(vec, rev=true)) .- 1)
 
-pysd_vector_reorder(vec, order) = vec[Int.(order)]
+pysd_vector_reorder(vec, order) = vec[Int.(order) .+ 1]
 
 pysd_vector_rank(vec, dir) =
     Float64.(invperm(ifelse(dir > 0, sortperm(vec), sortperm(vec, rev=true))))
