@@ -360,6 +360,83 @@ end
 - **Data by name** from Excel/CSV, read when the model runs, with scenarios kept separate from the equations.
 - **Modules** that can run on their own or linked.
 
+### Ideas from BPTK-Py
+
+[BPTK-Py](https://github.com/transentis/bptk_py) (the Business Prototyping
+Toolkit, MIT licence) builds SD models in Python with its own DSL, and puts a lot
+of work into what happens *around* the equations: scenarios, step-by-step runs and
+a few stock types Vensim doesn't have. These parts are worth taking:
+
+- **Scenarios as data, separate from the model.** BPTK keeps a model's base
+  values plus named scenarios that override only what changes, for constants
+  *and* lookup points, usually in JSON files next to the model. All scenarios run
+  in one call, and the results come back as one table to compare:
+  ```julia
+  @scenarios customer_acquisition begin
+      base = ()
+      low_word_of_mouth = (word_of_mouth_success = 0.001,)
+      high_word_of_mouth = (word_of_mouth_success = 0.1,)
+      new_productivity = (productivity = [(0, 0.4), (1, 1.0), (2.5, 1.25)],)  # lookup points
+  end
+
+  res = run_scenarios(customer_acquisition; vars = [:customers])  # a column per scenario
+  ```
+  The same scenarios could live in a TOML file, so they can be edited without
+  touching the model.
+- **Strategies: changes at given times.** A scenario can also change constants
+  *during* the run (`"strategy": {"20": {"deadline": 120}}` in BPTK). With the
+  ODE style this is a preset-time callback, or `step!` plus `set_parameter!` on a
+  `CoupledODEs`:
+  ```julia
+  late_deadline = (initial_open_tasks = 120,
+                   strategy = (20 => (deadline = 120,),))   # from t = 20 on
+  ```
+- **Sessions: step-by-step runs with new settings each step.** BPTK uses these for
+  management games and simulation servers (`begin_session`, `run_step(settings)`,
+  `session_results`). DynamicalSystems.jl already provides the mechanics (see
+  [Running and analysing](#running-and-analysing)); a thin wrapper with the
+  model's names would make it as easy to use:
+  ```julia
+  session = begin_session(customer_acquisition, :base)
+  run_step!(session; advertising_budget = 200)    # one time step with a new budget
+  results(session)
+  ```
+- **Non-negative stocks.** XMILE stocks can be marked non-negative: the outflows
+  are cut back so the stock never goes below zero. BPTK supports this with
+  separate inflow and outflow lists. In the DSL, a `∂t` equation already shows
+  which flows go in (+) and which go out (−), so one line can ask for it:
+  ```julia
+  @nonnegative inventory
+  ∂t(inventory) = production - shipments - losses
+  ```
+  PySD's XMILE translator already reads this flag and the Python builder uses it;
+  the Julia builder ignores it today, which is why the `non_negative_*` test models
+  fail there (SDXorg/pysd#499).
+- **Conveyors** (XMILE): a stock where material leaves after a transit time,
+  with optional leakage on the way. Like `SMOOTH`, it fits as one stateful
+  function whose stage stocks the macro creates:
+  ```julia
+  arrivals = CONVEYOR(shipments, transit_time; leakage = 0.02)
+  ```
+- **A builder API next to the macro.** BPTK models are built with plain calls
+  (`model.stock("customers")`, then `customers.equation = …`). A Julia
+  equivalent would let programs generate models (from a database, or as
+  variants of a model), with `@model` as a shorter way to write the same thing:
+  ```julia
+  m = SDModel(:customer_acquisition; time = 1:1:60)
+  customers = stock!(m, :customers; init = 0.0)
+  acquisition = aux!(m, :customer_acquisition, :(min(potential_customers, ads + word_of_mouth)))
+  ```
+- **Modules with qualified names.** Parts of a model are written once and used
+  several times; their variables appear in the results with the module name in
+  front (`retailer.inventory`, `wholesaler.inventory`), as in BPTK's beer game.
+- **Error messages that name the loop.** When auxiliaries form an algebraic
+  loop, BPTK names it (`a → b → a`) instead of only saying there is one. The
+  macro can do the same when it sorts the equations.
+
+Not needed in Julia: BPTK's compiled Rust engine (Julia models are compiled
+already) and biflows (any flow in the DSL can be negative).
+
 ---
 
 ## Measurements
@@ -405,6 +482,7 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 - **DSL index syntax:** declared index letters (`@index i ∈ entries`), or named dimensions only (`stock[entries, columns]`, as Vensim)?
 - **MTK:** keep generating it from the translator, or only from the DSL?
 - **Units:** checked (e.g. with Unitful.jl) or documentation only?
+- **Scenarios:** in Julia only (`@scenarios`), or also in a file (TOML) that can be edited without touching the model?
 
 ## Plan
 
@@ -418,5 +496,6 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 - [Vensim](https://vensim.com/) `.mdl`: equations, subscripts and function library.
 - [ModelingToolkit.jl](https://github.com/SciML/ModelingToolkit.jl): symbolic modelling, used by the MTK style.
 - [StockFlow.jl](https://github.com/AlgebraicJulia/StockFlow.jl): stock-and-flow diagrams with composition and stratification; the source of the optional flow notation.
+- [BPTK-Py](https://github.com/transentis/bptk_py): SD DSL in Python; the source of the scenario, strategy, session, non-negative stock and conveyor ideas.
 - [DynamicalSystems.jl](https://juliadynamics.github.io/DynamicalSystemsDocs.jl/): standard interface for running and analysing dynamical systems.
 - [ComponentArrays.jl](https://github.com/jonniedie/ComponentArrays.jl): named, shaped state vectors.
