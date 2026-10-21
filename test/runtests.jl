@@ -198,6 +198,23 @@ end
 end
 end  # HAS_TEST_MODELS
 
+@testset "tab data: line endings" begin
+    # Vensim writes .tab files with Unix, Windows or old Mac (CR only) line endings
+    rows = ["Time\tStock A\tFlow", "0\t1\t0.5", "1\t2\t", "2\t4\t0.25"]
+    for (name, eol) in (("unix", "\n"), ("windows", "\r\n"), ("mac", "\r"))
+        path = joinpath(mktempdir(), "data_$name.tab")
+        write(path, join(rows, eol) * eol)
+        times, vals = pysd_tab_read_series(path, "Stock A")
+        @test times == [0.0, 1.0, 2.0]
+        @test vals == [1.0, 2.0, 4.0]
+        _, flow = pysd_tab_read_series(path, "Flow")
+        @test flow[1] == 0.5 && isnan(flow[2]) && flow[3] == 0.25
+    end
+    empty = joinpath(mktempdir(), "empty.tab")
+    write(empty, "")
+    @test_throws "Empty file" pysd_tab_read_series(empty, "Stock A")
+end
+
 @testset "tab data" begin
     times, vals = pysd_tab_read_series(joinpath(DATA, "sample.tab"), "stock a")
     @test times == [0.0, 1.0, 2.0]
