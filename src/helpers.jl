@@ -282,12 +282,15 @@ Read a tab- or comma-separated Vensim output file and return the time series
 for the column named `colname`.  Matching is case-insensitive and
 leading/trailing whitespace is ignored.
 
-Uses only Julia Base functions (`readlines`, `split`, `strip`) — no extra packages required.
+Accepts Unix, Windows and old Mac (CR only) line endings.  Uses only Julia
+Base functions — no extra packages required.
 """
 function pysd_tab_read_series(filepath::AbstractString, colname::AbstractString)
     sep = endswith(lowercase(filepath), ".tab") ? '\t' : ','
-    raw = readlines(filepath)
-    isempty(raw) && error("Empty file: $filepath")
+    content = read(filepath, String)
+    isempty(strip(content)) && error("Empty file: $filepath")
+    # split on any line ending: Vensim writes Unix, Windows and old Mac (CR only) files
+    raw = split(content, r"\r\n|\r|\n")
 
     header = strip.(split(raw[1], sep))
     target = strip(colname)
