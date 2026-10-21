@@ -58,8 +58,10 @@ end
     @test pysd_pi() ≈ π
     @test pysd_power(2.0, 3.0) == 8.0
     @test pysd_power(-2.0, 3.0) == -8.0
-    # Vensim POWER / numpy.power: (-2)^2 = 4
-    @test_broken pysd_power(-2.0, 2.0) == 4.0
+    # Vensim POWER / numpy.power (also used for `^`): (-2)^2 = 4
+    @test pysd_power(-2.0, 2.0) == 4.0
+    @test pysd_power(4, -1) == 0.25
+    @test pysd_power(-8.0, 1 / 3) === NaN        # negative base, non-integer exponent (numpy: nan)
 end
 
 @testset "time functions" begin
@@ -69,7 +71,11 @@ end
     @test [pysd_pulse_train(t, 1.0, 4.0, 1.0, 9.0) for t in (0.0, 1.0, 1.5, 2.0, 5.0, 13.0)] ==
           [0.0, 1.0, 1.0, 0.0, 1.0, 0.0]
     # end time is exclusive in Vensim / Python PySD (t < end)
-    @test_broken pysd_pulse_train(9.0, 1.0, 4.0, 1.0, 9.0) == 0.0
+    @test pysd_pulse_train(9.0, 1.0, 4.0, 1.0, 9.0) == 0.0
+    # times accumulated by Euler steps are slightly off (0.1 + 0.1 + 0.1 < 0.3 is false, but
+    # 0.7 - 0.4 < 0.3): pulses start up to 1e-6 early, as in Python PySD
+    @test pysd_pulse(0.3 - 1e-9, 0.3, 1.0) == 1.0
+    @test pysd_pulse_train(5.0 - 1e-9 + 4.0, 1.0, 4.0, 1.0, 20.0) == 1.0
     # RAMP(slope=2, start=1, end=4)
     @test [pysd_ramp(t, 2.0, 1.0, 4.0) for t in (0.0, 1.0, 2.0, 4.0, 10.0)] ==
           [0.0, 0.0, 2.0, 6.0, 6.0]
@@ -78,6 +84,13 @@ end
     @test [pysd_step(t, 5, 3.0) for t in (2.9, 3.0, 4.0)] == [0.0, 5.0, 5.0]
     # XMILE RAMP(slope, start)
     @test [pysd_xramp(t, 2.0, 1.0) for t in (0.0, 3.0)] == [0.0, 4.0]
+    # XMILE PULSE(magnitude, start[, interval]): magnitude / time_step during one time step
+    dt = 0.25
+    @test [pysd_xpulse(t, 2.0, 5.0, dt) for t in (1.75, 2.0, 2.25)] == [0.0, 20.0, 0.0]
+    @test [pysd_xpulse_train(t, 1.0, 3.0, 5.0, dt) for t in (0.75, 1.0, 1.25, 4.0, 7.0, 7.25)] ==
+          [0.0, 20.0, 0.0, 20.0, 20.0, 0.0]
+    # models translated by an older PySD call the methods without time_step: still run, with a warning
+    @test_logs (:warn,) pysd_xpulse(2.0, 2.0, 5.0)
     @test pysd_get_time_value(15.0, x -> 2x, 0.0, 10.0) == 20.0   # clamped to hi
     @test pysd_get_time_value(5.0, x -> 2x, 0.0, 10.0) == 10.0
 end
@@ -114,13 +127,16 @@ end
     @test pysd_vector_select(sel, v, -1.0, 3) == 2.0
     @test pysd_vector_select(sel, v, -1.0, 4) == 2.5
     @test pysd_vector_select(zeros(3), v, -1.0, 1) == -1.0
-    @test pysd_vector_reorder(v, [2.0, 3.0, 1.0]) == [1.0, 2.0, 3.0]
+    # VECTOR REORDER takes 0-based positions, as returned by VECTOR SORT ORDER
+    @test pysd_vector_reorder(v, [1.0, 2.0, 0.0]) == [1.0, 2.0, 3.0]
+    @test pysd_vector_reorder(v, pysd_vector_sort_order(v, 1)) == sort(v)
+    @test pysd_vector_reorder(v, pysd_vector_sort_order(v, -1)) == sort(v; rev = true)
     # VECTOR RANK is 1-based in Vensim and Python PySD
     @test pysd_vector_rank(v, 1) == [3.0, 1.0, 2.0]
     @test pysd_vector_rank(v, -1) == [1.0, 3.0, 2.0]
     # VECTOR SORT ORDER: Vensim / Python PySD return 0-based positions
-    @test_broken pysd_vector_sort_order(v, 1) == [1.0, 2.0, 0.0]
-    @test pysd_vector_sort_order(v, 1) .- 1 == [1.0, 2.0, 0.0]
+    @test pysd_vector_sort_order(v, 1) == [1.0, 2.0, 0.0]
+    @test pysd_vector_sort_order(v, -1) == [0.0, 2.0, 1.0]
 end
 
 @testset "random" begin
