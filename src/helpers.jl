@@ -115,7 +115,7 @@ end
 @register_symbolic pysd_random_normal(lo::Real, hi::Real, mean::Real, std::Real, _seed::Real)
 
 function pysd_random_exponential(lo, hi, mean, _seed)
-    x = lo + mean * Base.randexp()
+    x = lo + mean * Random.randexp()
     return clamp(x, lo, hi)
 end
 @register_symbolic pysd_random_exponential(lo::Real, hi::Real, mean::Real, _seed::Real)
@@ -298,10 +298,9 @@ function pysd_tab_read_series(filepath::AbstractString, colname::AbstractString)
     times = Float64[]
     vals  = Float64[]
     for line in raw[2:end]
-        stripped = strip(line)
-        isempty(stripped) && continue
+        stripped = rstrip(line, ['\r', '\n'])  # keep empty trailing cells
+        isempty(strip(stripped)) && continue
         fields = split(stripped, sep)
-        length(fields) < max(1, col_idx) && continue
         t_str = strip(fields[1])
         v_str = col_idx <= length(fields) ? strip(fields[col_idx]) : ""
         isempty(t_str) && continue

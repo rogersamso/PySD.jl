@@ -46,6 +46,20 @@ Functions for reading Vensim external data (`GET DIRECT CONSTANTS`,
 
 Excel files are cached in memory (one read per file per session).
 
+## Running the tests
+
+The tests use the reference models of [SDXorg/test-models](https://github.com/SDXorg/test-models),
+included as a git submodule:
+
+```sh
+git submodule update --init test/test-models
+julia --project -e 'using Pkg; Pkg.test()'
+```
+
+Set `PYSD_TEST_MODELS` to use another checkout of test-models (e.g.
+`tests/test-models/tests` in a PySD checkout).  Without test-models the
+reference tests are skipped with a warning.
+
 ## Version compatibility
 
 Generated models embed the PySD.jl version they were translated against.
