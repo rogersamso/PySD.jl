@@ -220,13 +220,13 @@ function pysd_xlsx_read_series(path::String, sheet::String,
         y_row = parse(Int, m[2])
         nr = XLSX.get_dimension(ws).stop.row_number
         nc = XLSX.get_dimension(ws).stop.column_number
-        x_data = ws[XLSX.CellRef(row_num, y_col):XLSX.CellRef(row_num, nc)]
+        x_data = ws[XLSX.CellRange(XLSX.CellRef(row_num, y_col), XLSX.CellRef(row_num, nc))]
         xs_raw = vec(x_data)
         last_valid = findlast(v -> v !== nothing && !ismissing(v), xs_raw)
         last_valid === nothing && error("No x data found in row " * x_row_or_col)
         ncols = last_valid
         xs = Float64[_to_float(xs_raw[i]) for i in 1:ncols]
-        y_data = ws[XLSX.CellRef(y_row, y_col):XLSX.CellRef(y_row, y_col + ncols - 1)]
+        y_data = ws[XLSX.CellRange(XLSX.CellRef(y_row, y_col), XLSX.CellRef(y_row, y_col + ncols - 1))]
         ys = _to_float64_vec(y_data)
         return xs, ys
     elseif !x_is_row && y_is_cell && !_xlsx_is_cell_ref(x_row_or_col)
@@ -235,13 +235,13 @@ function pysd_xlsx_read_series(path::String, sheet::String,
         y_col = _xlsx_col_to_num(m[1])
         y_row = parse(Int, m[2])
         nr = XLSX.get_dimension(ws).stop.row_number
-        x_data = ws[XLSX.CellRef(y_row, x_col):XLSX.CellRef(nr, x_col)]
+        x_data = ws[XLSX.CellRange(XLSX.CellRef(y_row, x_col), XLSX.CellRef(nr, x_col))]
         xs_raw = vec(x_data)
         last_valid = findlast(v -> v !== nothing && !ismissing(v), xs_raw)
         last_valid === nothing && error("No x data found in column " * x_row_or_col)
         nrows = last_valid
         xs = Float64[_to_float(xs_raw[i]) for i in 1:nrows]
-        y_data = ws[XLSX.CellRef(y_row, y_col):XLSX.CellRef(y_row + nrows - 1, y_col)]
+        y_data = ws[XLSX.CellRange(XLSX.CellRef(y_row, y_col), XLSX.CellRef(y_row + nrows - 1, y_col))]
         ys = _to_float64_vec(y_data)
         return xs, ys
     else

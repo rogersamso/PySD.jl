@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "3e5bea9fe49537c7f3745e28d3dc1667f7bcdcd2"
+project_hash = "1d4fd31b40101f56dec5995c2481b73d0a471537"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "bbc22a9a08a0ef6460041086d8a7b27940ed4ffd"
@@ -894,7 +894,7 @@ uuid = "43287f4e-b6f4-7ad1-bb20-aadabca52c3d"
 version = "1.4.0"
 
 [[deps.PySD]]
-deps = ["DataInterpolations", "NCDatasets", "Symbolics", "XLSX"]
+deps = ["DataInterpolations", "NCDatasets", "Random", "Symbolics", "XLSX"]
 path = "."
 uuid = "d7e3e0f0-7a2b-4e3a-9c1d-5a6b8c9d0e1f"
 version = "0.1.0"

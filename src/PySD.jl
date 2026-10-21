@@ -2,6 +2,7 @@ module PySD
 
 using DataInterpolations
 using NCDatasets
+using Random
 using Symbolics
 using XLSX
 
