@@ -396,7 +396,7 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 2. **ODE style:** named state (ComponentArrays), parameters in `p` (`Params`), a single `model!(d, s, p, t)`, constants written once, array operations where dimensions line up and comprehensions where they don't, stateful functions as stage-stock helpers in PySD.jl.
 3. **Results** keep Vensim's variable names and labelled dimensions (as `save_results` does since PySD.jl 0.2.0).
 4. **The DSL** is the long-term target. It is built in PySD.jl as a macro that generates the ODE and MTK forms. The translator then emits DSL text.
-5. **DynamicalSystems.jl** integration (`CoupledODEs`) replaces building our own step-by-step, parameter-change and state-saving features.
+5. **DynamicalSystems.jl** integration (`CoupledODEs`) replaces building our own step-by-step, parameter-change and state-saving features. It is an **optional dependency**: a package extension (`[weakdeps]` + `[extensions]` in PySD.jl's `Project.toml`), like the existing ModelingToolkit extension. `using PySD, DynamicalSystemsBase` adds e.g. `CoupledODEs(model)`; without it, DynamicalSystems is not installed or loaded.
 
 ## Open questions
 
@@ -412,7 +412,7 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 2. ODE style in the translator, step by step, guarded by the reference tests.
 3. DSL macro in PySD.jl for a first set of constructs (stocks, auxiliaries, subscripts, SUM, SMOOTH/DELAY), generating the ODE style.
 4. Translator emits the DSL; MTK generated from the DSL.
-5. DynamicalSystems.jl integration and documentation.
+5. DynamicalSystems.jl integration as a package extension (optional dependency), and documentation.
 
 ## Related work
 - [Vensim](https://vensim.com/) `.mdl`: equations, subscripts and function library.
