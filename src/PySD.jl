@@ -5,6 +5,8 @@ using NCDatasets
 using Random
 using Symbolics
 using XLSX
+using LibXLS
+using DelimitedFiles: readdlm
 
 const PYSD_JL_VERSION = let
     proj = joinpath(@__DIR__, "..", "Project.toml")

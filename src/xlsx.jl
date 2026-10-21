@@ -1,19 +1,97 @@
-# Excel data reader helpers for Vensim GET DIRECT CONSTANTS / LOOKUPS / DATA.
+# Spreadsheet and text data readers for Vensim GET XLS/DIRECT CONSTANTS / LOOKUPS / DATA.
+#
+# File formats, as in Python PySD:
+#   - .xlsx / .xlsm   XLSX.jl
+#   - .xls            LibXLS.jl
+#   - any other file  delimited text (.csv, .tab, ...); the "sheet" argument is the
+#                     separator when it is not alphanumeric (e.g. ","), otherwise
+#                     "," for .csv and tab for other files
 #
 # Supports three reference modes matching the Vensim conventions:
-#   - Named ranges  (e.g. cell = "my_param", x = "year_range")
+#   - Named ranges  (e.g. cell = "my_param", x = "year_range"), .xlsx files only
 #   - Cell refs     (e.g. cell = "B2")
 #   - Row/column    (e.g. x = "4" for row 4, x = "A" for column A)
 
+# A sheet as a grid of cells: `_cells(s, r1, c1, r2, c2)` returns the cells of a
+# rectangle as a Matrix, `_lastcell(s)` the last (row, column) holding data.
+abstract type _Sheet end
+
+struct _XLSXSheet <: _Sheet
+    ws::XLSX.Worksheet
+end
+
+struct _GridSheet <: _Sheet
+    grid::Matrix{Any}
+end
+
 const _XLSX_CACHE = Dict{String, XLSX.XLSXFile}()
+const _SHEET_CACHE = Dict{Tuple{String, String}, _Sheet}()
 
 function _xlsx_open(path::String)
     p = abspath(path)
     get!(() -> XLSX.readxlsx(p), _XLSX_CACHE, p)
 end
 
-function _xlsx_is_cell_ref(s::String)
-    return match(r"^[A-Za-z]{1,3}[0-9]+$", s) !== nothing
+_file_ext(path::AbstractString) = lowercase(splitext(path)[2])
+_is_xlsx(path::AbstractString) = _file_ext(path) in (".xlsx", ".xlsm")
+
+function _open_sheet(path::String, sheet::String)
+    p = abspath(path)
+    get!(_SHEET_CACHE, (p, sheet)) do
+        if _is_xlsx(p)
+            _XLSXSheet(_xlsx_open(p)[sheet])
+        elseif _file_ext(p) == ".xls"
+            _GridSheet(_xls_grid(p, sheet))
+        else
+            _GridSheet(_text_grid(p, sheet))
+        end
+    end
+end
+
+function _xls_grid(path::String, sheet::String)
+    LibXLS.openxls(path) do wb
+        ws = wb[sheet]
+        nr, nc = size(ws)
+        Any[ws[i, j] for i in 1:nr, j in 1:nc]
+    end
+end
+
+function _text_grid(path::String, sheet::String)
+    delim = if !isempty(sheet) && !isletter(sheet[1]) && !isdigit(sheet[1])
+        sheet[1]
+    else
+        _file_ext(path) == ".csv" ? ',' : '\t'
+    end
+    content = read(path, String)
+    isempty(strip(content)) && return Matrix{Any}(undef, 0, 0)
+    # any line ending, as pysd_tab_read_series
+    return readdlm(IOBuffer(replace(content, r"\r\n?" => "\n")), delim, Any)
+end
+
+function _cells(s::_XLSXSheet, r1::Int, c1::Int, r2::Int, c2::Int)
+    data = s.ws[XLSX.CellRange(XLSX.CellRef(r1, c1), XLSX.CellRef(r2, c2))]
+    return data isa AbstractMatrix ? data : reshape(Any[data], 1, 1)
+end
+
+function _cells(s::_GridSheet, r1::Int, c1::Int, r2::Int, c2::Int)
+    nr, nc = size(s.grid)
+    return Any[(i <= nr && j <= nc) ? s.grid[i, j] : missing for i in r1:r2, j in c1:c2]
+end
+
+function _lastcell(s::_XLSXSheet)
+    stop = XLSX.get_dimension(s.ws).stop
+    return stop.row_number, stop.column_number
+end
+
+_lastcell(s::_GridSheet) = size(s.grid)
+
+const _CELL_RE = r"^\$?([A-Za-z]{1,3})\$?([0-9]+)$"
+
+_xlsx_is_cell_ref(s::AbstractString) = match(_CELL_RE, s) !== nothing
+
+function _parse_cell(s::AbstractString)
+    m = match(_CELL_RE, s)
+    return parse(Int, m[2]), _xlsx_col_to_num(m[1])
 end
 
 function _xlsx_col_to_num(col::AbstractString)
@@ -34,9 +112,6 @@ function _xlsx_num_to_col(n::Int)
 end
 
 function _xlsx_resolve_range(xf::XLSX.XLSXFile, sheet::String, name::String)
-    if _xlsx_is_cell_ref(name)
-        return sheet * "!" * name
-    end
     wb = xf.workbook
     if haskey(wb.workbook_names, name)
         return string(wb.workbook_names[name].value)
@@ -64,10 +139,39 @@ function _xlsx_resolve_range(xf::XLSX.XLSXFile, sheet::String, name::String)
     error("Named range '" * name * "' not found in " * string(xf.source))
 end
 
+"""Whether `name` is a defined name (named range) of the `.xlsx` file at `path`."""
+function _is_defined_name(path::String, name::String)
+    _is_xlsx(path) || return false
+    wb = _xlsx_open(path).workbook
+    haskey(wb.workbook_names, name) && return true
+    return any(n == name for ((_, n), _) in wb.worksheet_names)
+end
+
 function _xlsx_split_ref(ref::String)
     parts = split(ref, '!')
     return String(parts[1]), String(parts[2])
 end
+
+"""
+    _read_range(path, sheet, name)
+
+Cells of a cell (`"B2"`), a cell range (`"B2:D5"`) or a named range (`.xlsx` only),
+as a Matrix.
+"""
+function _read_range(path::String, sheet::String, name::String)
+    parts = split(name, ':')
+    if all(_xlsx_is_cell_ref, parts) && length(parts) <= 2 && !_is_defined_name(path, name)
+        r1, c1 = _parse_cell(parts[1])
+        r2, c2 = length(parts) == 2 ? _parse_cell(parts[2]) : (r1, c1)
+        return _cells(_open_sheet(path, sheet), r1, c1, r2, c2)
+    end
+    _is_xlsx(path) || error("Named range '" * name * "' in " * path *
+                            ": named ranges are only supported in .xlsx files")
+    sname, cells = _xlsx_split_ref(_xlsx_resolve_range(_xlsx_open(path), sheet, name))
+    return _read_range(path, String(strip(sname, '\'')), cells)
+end
+
+_is_blank(v) = v === nothing || ismissing(v) || (v isa AbstractString && isempty(v))
 
 function _to_float(x)
     x === nothing && return NaN
@@ -77,9 +181,43 @@ function _to_float(x)
 end
 
 function _to_float64_vec(data)
-    v = vec(data isa Matrix ? data : reshape([data], 1, 1))
+    v = vec(data isa AbstractMatrix ? data : reshape([data], 1, 1))
     return Float64[_to_float(x) for x in v]
 end
+
+"""
+    _read_row_or_col(path, sheet, x_row_or_col, y_cell, n)
+
+Row mode (`x_row_or_col` is a row number) and column mode (a column letter):
+the x values run along that row or column from the column or row of `y_cell` until
+the last non-blank one; the y values are the `n` rows (row mode) or columns (column
+mode) starting at `y_cell`.  Returns `(xs, ys)` with `ys` an `n × length(xs)` Matrix.
+"""
+function _read_row_or_col(path::String, sheet::String, x_row_or_col::String,
+                          y_cell::String, n::Int)
+    s = _open_sheet(path, sheet)
+    nr, nc = _lastcell(s)
+    y_row, y_col = _parse_cell(y_cell)
+    if all(isdigit, x_row_or_col)
+        x_raw = vec(_cells(s, parse(Int, x_row_or_col), y_col, parse(Int, x_row_or_col), max(nc, y_col)))
+        last_valid = findlast(!_is_blank, x_raw)
+        last_valid === nothing && error("No x data found in row " * x_row_or_col)
+        ys = _cells(s, y_row, y_col, y_row + n - 1, y_col + last_valid - 1)
+    else
+        x_col = _xlsx_col_to_num(x_row_or_col)
+        x_raw = vec(_cells(s, y_row, x_col, max(nr, y_row), x_col))
+        last_valid = findlast(!_is_blank, x_raw)
+        last_valid === nothing && error("No x data found in column " * x_row_or_col)
+        ys = permutedims(_cells(s, y_row, y_col, y_row + last_valid - 1, y_col + n - 1))
+    end
+    xs = Float64[_to_float(x_raw[i]) for i in 1:last_valid]
+    return xs, Float64[_to_float(v) for v in ys]
+end
+
+# A defined name (e.g. "xs", which is also a column) takes precedence, as in Excel
+_is_row_or_col(path::String, x::String, y::String) =
+    _xlsx_is_cell_ref(y) && !_is_defined_name(path, y) && !_is_defined_name(path, x) &&
+    (all(isdigit, x) || occursin(r"^[A-Za-z]{1,3}$", x))
 
 """
     pysd_xlsx_read_constant(path, sheet, name; transpose=false)
@@ -89,24 +227,18 @@ The `name` may end with `*` to indicate transposition (Vensim convention).
 """
 function pysd_xlsx_read_constant(path::String, sheet::String, name::String;
                                  transpose::Bool=false, scalar::Bool=false)
-    xf = _xlsx_open(path)
-    ref = _xlsx_resolve_range(xf, sheet, name)
-    sname, cells = _xlsx_split_ref(ref)
-    data = xf[sname][cells]
-    if data isa Matrix
-        transpose && (data = permutedims(data))
-        if scalar || length(data) == 1
-            return _to_float(data[1])
-        end
-        nr, nc = size(data)
-        if nc == 1
-            return Float64[_to_float(data[i, 1]) for i in 1:nr]
-        elseif nr == 1
-            return Float64[_to_float(data[1, j]) for j in 1:nc]
-        end
-        return Float64[_to_float(data[i, j]) for i in 1:nr, j in 1:nc]
+    data = _read_range(path, sheet, name)
+    transpose && (data = permutedims(data))
+    if scalar || length(data) == 1
+        return _to_float(data[1])
     end
-    return _to_float(data)
+    nr, nc = size(data)
+    if nc == 1
+        return Float64[_to_float(data[i, 1]) for i in 1:nr]
+    elseif nr == 1
+        return Float64[_to_float(data[1, j]) for j in 1:nc]
+    end
+    return Float64[_to_float(data[i, j]) for i in 1:nr, j in 1:nc]
 end
 
 """
@@ -158,42 +290,32 @@ function pysd_xlsx_read_series(path::String, sheet::String,
 end
 
 """
-    pysd_xlsx_build_lookup_dispatch(path, sheet, x_name, y_name)
+    pysd_xlsx_build_lookup_dispatch(path, sheet, x_name, y_name; n=1, method=:interpolate)
 
-Read a (possibly 2D) lookup from Excel and return a vector of interpolation
-functions, one per column of the y data.  For 1D data returns a single-element
-vector.
+Read a (possibly 2D) lookup or data series from Excel and return a vector of
+interpolation functions, one per series of the y data.  With named ranges the
+series are the columns (or rows) of the y range; in row or column mode (`x_name` a
+row number or a column letter, `y_name` a cell) they are the `n` rows (or columns)
+from `y_name`.  `method` is a DATA keyword (`:interpolate`, `:hold_backward`,
+`:look_forward`), as in [`pysd_build_tab_itp`](@ref).
 """
 function pysd_xlsx_build_lookup_dispatch(path::String, sheet::String,
-                                         x_name::String, y_name::String)
-    xf = _xlsx_open(path)
-    x_ref = _xlsx_resolve_range(xf, sheet, x_name)
-    y_ref = _xlsx_resolve_range(xf, sheet, y_name)
-    x_sname, x_cells = _xlsx_split_ref(x_ref)
-    y_sname, y_cells = _xlsx_split_ref(y_ref)
-    x_data = xf[x_sname][x_cells]
-    y_data = xf[y_sname][y_cells]
-    xs = _to_float64_vec(x_data)
-    if y_data isa Matrix
-        nr, nc = size(y_data)
-        if nr == length(xs)
-            return [LinearInterpolation(
-                        Float64[_to_float(y_data[i, j]) for i in 1:nr], xs;
-                        extrapolation_left=ExtrapolationType.Constant,
-                        extrapolation_right=ExtrapolationType.Constant)
-                    for j in 1:nc]
-        elseif nc == length(xs)
-            return [LinearInterpolation(
-                        Float64[_to_float(y_data[i, j]) for j in 1:nc], xs;
-                        extrapolation_left=ExtrapolationType.Constant,
-                        extrapolation_right=ExtrapolationType.Constant)
-                    for i in 1:nr]
-        end
+                                         x_name::String, y_name::String;
+                                         n::Int=1, method::Symbol=:interpolate)
+    itp(ys, xs) = pysd_build_tab_itp(ys, xs, method)
+    if _is_row_or_col(path, x_name, y_name)
+        xs, ys = _read_row_or_col(path, sheet, x_name, y_name, n)
+        return [itp(ys[k, :], xs) for k in 1:n]
     end
-    ys = _to_float64_vec(y_data)
-    return [LinearInterpolation(ys, xs;
-                extrapolation_left=ExtrapolationType.Constant,
-                extrapolation_right=ExtrapolationType.Constant)]
+    xs = _to_float64_vec(_read_range(path, sheet, x_name))
+    y_data = _read_range(path, sheet, y_name)
+    nr, nc = size(y_data)
+    if nr == length(xs) && nc > 1
+        return [itp(Float64[_to_float(y_data[i, j]) for i in 1:nr], xs) for j in 1:nc]
+    elseif nc == length(xs) && nr > 1
+        return [itp(Float64[_to_float(y_data[i, j]) for j in 1:nc], xs) for i in 1:nr]
+    end
+    return [itp(_to_float64_vec(y_data), xs)]
 end
 
 """
@@ -208,63 +330,20 @@ Returns `(xs::Vector{Float64}, ys::Vector{Float64})`.
 """
 function pysd_xlsx_read_series(path::String, sheet::String,
                                x_row_or_col::String, y_cell::String)
-    xf = _xlsx_open(path)
-    ws = xf[sheet]
-    x_is_row = all(isdigit, x_row_or_col)
-    y_is_cell = _xlsx_is_cell_ref(y_cell)
-
-    if x_is_row && y_is_cell
-        row_num = parse(Int, x_row_or_col)
-        m = match(r"^([A-Za-z]+)([0-9]+)$", y_cell)
-        y_col = _xlsx_col_to_num(m[1])
-        y_row = parse(Int, m[2])
-        nr = XLSX.get_dimension(ws).stop.row_number
-        nc = XLSX.get_dimension(ws).stop.column_number
-        x_data = ws[XLSX.CellRange(XLSX.CellRef(row_num, y_col), XLSX.CellRef(row_num, nc))]
-        xs_raw = vec(x_data)
-        last_valid = findlast(v -> v !== nothing && !ismissing(v), xs_raw)
-        last_valid === nothing && error("No x data found in row " * x_row_or_col)
-        ncols = last_valid
-        xs = Float64[_to_float(xs_raw[i]) for i in 1:ncols]
-        y_data = ws[XLSX.CellRange(XLSX.CellRef(y_row, y_col), XLSX.CellRef(y_row, y_col + ncols - 1))]
-        ys = _to_float64_vec(y_data)
-        return xs, ys
-    elseif !x_is_row && y_is_cell && !_xlsx_is_cell_ref(x_row_or_col)
-        x_col = _xlsx_col_to_num(x_row_or_col)
-        m = match(r"^([A-Za-z]+)([0-9]+)$", y_cell)
-        y_col = _xlsx_col_to_num(m[1])
-        y_row = parse(Int, m[2])
-        nr = XLSX.get_dimension(ws).stop.row_number
-        x_data = ws[XLSX.CellRange(XLSX.CellRef(y_row, x_col), XLSX.CellRef(nr, x_col))]
-        xs_raw = vec(x_data)
-        last_valid = findlast(v -> v !== nothing && !ismissing(v), xs_raw)
-        last_valid === nothing && error("No x data found in column " * x_row_or_col)
-        nrows = last_valid
-        xs = Float64[_to_float(xs_raw[i]) for i in 1:nrows]
-        y_data = ws[XLSX.CellRange(XLSX.CellRef(y_row, y_col), XLSX.CellRef(y_row + nrows - 1, y_col))]
-        ys = _to_float64_vec(y_data)
-        return xs, ys
-    else
-        x_ref = _xlsx_resolve_range(xf, sheet, x_row_or_col)
-        y_ref = _xlsx_resolve_range(xf, sheet, y_cell)
-        x_sname, x_cells = _xlsx_split_ref(x_ref)
-        y_sname, y_cells = _xlsx_split_ref(y_ref)
-        x_data = xf[x_sname][x_cells]
-        y_data = xf[y_sname][y_cells]
-        xs = _to_float64_vec(x_data)
-        if y_data isa Matrix
-            nr, nc = size(y_data)
-            n = length(xs)
-            if nr == n
-                ys = Float64[_to_float(y_data[i, 1]) for i in 1:nr]
-            elseif nc == n
-                ys = Float64[_to_float(y_data[1, i]) for i in 1:nc]
-            else
-                ys = _to_float64_vec(y_data)
-            end
-        else
-            ys = Float64[_to_float(y_data)]
-        end
-        return xs, ys
+    if _is_row_or_col(path, x_row_or_col, y_cell)
+        xs, ys = _read_row_or_col(path, sheet, x_row_or_col, y_cell, 1)
+        return xs, vec(ys)
     end
+    xs = _to_float64_vec(_read_range(path, sheet, x_row_or_col))
+    y_data = _read_range(path, sheet, y_cell)
+    nr, nc = size(y_data)
+    n = length(xs)
+    if nr == n
+        ys = Float64[_to_float(y_data[i, 1]) for i in 1:nr]
+    elseif nc == n
+        ys = Float64[_to_float(y_data[1, i]) for i in 1:nc]
+    else
+        ys = _to_float64_vec(y_data)
+    end
+    return xs, ys
 end

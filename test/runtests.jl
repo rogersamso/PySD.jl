@@ -282,6 +282,51 @@ end
     @test only(pysd_xlsx_build_lookup_dispatch(xl, "Data", "xs", "ys"))(0.5) ≈ 4.5
 end
 
+if HAS_TEST_MODELS
+@testset "XLS readers (Excel 97-2003)" begin
+    # test-models/get_lookups_data_3d_xls/input.xls: x (time) in row 4 from C4,
+    # series in rows 5-8 (A Row1, A Row2, B Row1, B Row2)
+    xls = joinpath(TEST_MODELS, "get_lookups_data_3d_xls", "input.xls")
+    xs, ys = pysd_xlsx_read_series(xls, "Sheet1", "4", "C7")
+    @test xs == [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0]
+    @test ys == [-1.0, -3.0, -5.0, 10.0, 4.0, 5.0, 5.0]
+    fns = pysd_xlsx_build_lookup_dispatch(xls, "Sheet1", "4", "C5"; n=2)
+    @test length(fns) == 2
+    @test fns[1](5.0) == -2.0 && fns[2](5.0) == 5.0
+    @test fns[1](2.5) ≈ -1.0                            # linear interpolation
+    # DATA keywords: HOLD BACKWARD keeps the previous value, LOOK FORWARD the next
+    back = pysd_xlsx_build_lookup_dispatch(xls, "Sheet1", "4", "C5"; n=2, method=:hold_backward)
+    fwd = pysd_xlsx_build_lookup_dispatch(xls, "Sheet1", "4", "C5"; n=2, method=:look_forward)
+    @test back[1](2.5) == 0.0 && fwd[1](2.5) == -2.0
+    @test pysd_xlsx_read_constant(xls, "Sheet1", "D5") == -2.0
+    @test pysd_xlsx_read_constant(xls, "Sheet1", "C5:D6") == [0.0 -2.0; 4.0 5.0]
+    @test_throws ErrorException pysd_xlsx_read_constant(xls, "Sheet1", "some_name")
+end
+end  # HAS_TEST_MODELS
+
+@testset "delimited text readers (.csv, .tab)" begin
+    dir = mktempdir()
+    rows = [["time", "a", "b"], ["0", "1", "10"], ["1", "2", "20"], ["2", "4", ""]]
+    write_table(name, sep, eol) =
+        (f = joinpath(dir, name); write(f, join([join(r, sep) for r in rows], eol) * eol); f)
+    csv = write_table("data.csv", ",", "\n")
+    # column mode: x in column A, y from B2; the "sheet" is the separator
+    xs, ys = pysd_xlsx_read_series(csv, ",", "A", "B2")
+    @test xs == [0.0, 1.0, 2.0] && ys == [1.0, 2.0, 4.0]
+    @test pysd_xlsx_read_constant(csv, ",", "C3") == 20.0
+    @test isnan(pysd_xlsx_read_constant(csv, ",", "C4"))   # empty cell
+    fns = pysd_xlsx_build_lookup_dispatch(csv, ",", "A", "B2"; n=2)
+    @test fns[1](0.5) ≈ 1.5 && fns[2](0.5) ≈ 15.0
+    # row mode: x in row 2 from B2, y from B3
+    xs, ys = pysd_xlsx_read_series(csv, ",", "2", "B3")
+    @test xs == [1.0, 10.0] && ys == [2.0, 20.0]
+    # other separators and line endings; tab is the default outside .csv
+    semi = write_table("semi.csv", ";", "\r\n")
+    @test pysd_xlsx_read_series(semi, ";", "A", "B2")[2] == [1.0, 2.0, 4.0]
+    tab = write_table("data.tab", "\t", "\r")
+    @test pysd_xlsx_read_series(tab, "Sheet1", "A", "B2")[2] == [1.0, 2.0, 4.0]
+end
+
 @testset "save_results" begin
     dim_labels = Dict("A" => ["a1", "a2", "a3"], "B" => ["b1", "b2"], "C" => ["c1", "c2"])
     # state vector: scalar, then a 3x2 stock, then a 3x2x2 stock (column-major)
