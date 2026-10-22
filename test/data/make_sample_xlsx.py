@@ -31,6 +31,14 @@ for i, (t, v, w) in enumerate(zip([0, 1, 2, 3, 4], [5, 4, 3, 2, 1], [1, 2, 3, 4,
     ws.cell(row=2 + i, column=8, value=float(t))
     ws.cell(row=2 + i, column=9, value=float(v))
     ws.cell(row=2 + i, column=10, value=float(w))
+# Square block with the times in a row: one series per row (B14:C15)
+for j, t in enumerate([0.0, 1.0]):
+    ws.cell(row=13, column=2 + j, value=t)           # B13:C13
+for i, row in enumerate([[1.0, 2.0], [10.0, 20.0]]):
+    for j, v in enumerate(row):
+        ws.cell(row=14 + i, column=2 + j, value=v)
+# A number stored as text
+ws["E2"] = "0.1"
 
 names = {
     "scalar_param": "Data!$B$2",
@@ -40,6 +48,9 @@ names = {
     "xs": "Data!$H$2:$H$6",
     "ys": "Data!$I$2:$I$6",
     "ys2": "Data!$I$2:$J$6",
+    "xs_row": "Data!$B$13:$C$13",
+    "ys_square": "Data!$B$14:$C$15",
+    "text_param": "Data!$E$2",
 }
 for name, ref in names.items():
     wb.defined_names[name] = DefinedName(name, attr_text=ref)
