@@ -15,7 +15,7 @@ use:
 
 The idea is that a model written in the DSL can later **generate** both the
 ODE and the MTK forms, so the Python translator only has to produce DSL text,
-and that a visual editor can build and edit the same models (section 5).
+and that a visual editor can show and edit the same models without changing how they are written (section 5).
 
 Every ODE and MTK example below was run and compared with Vensim's output for
 the same test model (see [Measurements](#measurements)).
@@ -273,9 +273,11 @@ turns Vensim and XMILE models into the DSL (see
 
 Rules:
 - **Plain Julia.** Every model is valid Julia syntax (checked with Julia's
-  parser), read by a `@model` macro. Functions are Julia's own (`exp`, `log`,
-  `min`, `clamp`, `sum`, `ifelse`, `x > 0 ? a : b`) or short lowercase helpers
-  from PySD.jl, never Vensim's capitalised names.
+  parser). The `@model` macro only adds the equation syntax; everything else is
+  ordinary functions and types. Equations can call Julia's own functions
+  (`exp`, `log`, `min`, `clamp`, `sum`, `ifelse`, `x > 0 ? a : b`), short
+  lowercase helpers from PySD.jl, and the user's own functions, never Vensim's
+  capitalised names.
 - **Time is the variable `t`**, written where it is used, as in mathematics:
   `5 * (t ≥ 5)` rather than `STEP(5, 5)`. `@time t ∈ 0:0.25:20` declares it
   as a Julia range (initial time : time step : final time).
@@ -300,9 +302,13 @@ Rules:
   time constant). One equation per line, in the order a reader would explain the
   model, and a docstring above it with the description and the unit. The macro
   sorts the equations itself, so they can be moved freely.
-- **Modular.** Every part of a model is a component with declared inputs and
-  outputs (see [Components](#components)). Components are written once, used
-  many times, kept one per file, and each one runs and is tested on its own.
+- **Modular and composable, the Julia way.** A component is a Julia function
+  (inputs as arguments, parameters as keywords, outputs as the return value),
+  and variants of a model are types and methods chosen by multiple dispatch
+  (see [Components](#components) and
+  [Composability and multiple dispatch](#composability-and-multiple-dispatch)).
+  Code is generic over number types and uses the ecosystem's standard
+  interfaces (SciML problems, Tables.jl, DimensionalData).
 
 These are syntax sketches (the macro doesn't exist yet), but every block below
 parses as valid Julia.
@@ -502,77 +508,159 @@ dimension over the same labels.
 
 ### Components
 
-A component is a small model with **declared inputs and outputs** (its
-interface). Everything else inside it is private. It is defined once and then
-used like a function, as many times as needed. The supply-chain stage of the
-beer game, for example:
+A component is **an ordinary Julia function** that returns a model. Its
+positional arguments are its inputs, its keyword arguments are its parameters,
+and its `return` value names its outputs. There is no special component syntax
+to learn: a component is documented, called, passed around and tested like any
+other function. The supply-chain stage of the beer game, for example:
 
 ```julia
 # file: components/stage.jl
-"One stage of a supply chain: keeps an inventory and orders from upstream."
-@component stage begin
-    @input incoming_orders = 4                     # default, so the stage runs alone
-    @input deliveries = 4
-    @output orders_placed
-    @output shipments
+"""
+    stage(incoming_orders, deliveries; rule = Anchoring(), target = 12)
 
-    @param τ_adjust = 4                            # inventory adjustment time
-    @param target = 12
+One stage of a supply chain: keeps an inventory, ships what it can and orders
+from upstream following an ordering `rule`.
+"""
+function stage(incoming_orders = 4, deliveries = 4; rule = Anchoring(), target = 12)
+    @model begin
+        @nonnegative ∂t(inventory) = deliveries - shipments
+        inventory(0) = target
+        ∂t(backlog) = incoming_orders - shipments
+        backlog(0) = 0
 
-    @nonnegative ∂t(inventory) = deliveries - shipments
-    inventory(0) = target
-    ∂t(backlog) = incoming_orders - shipments
-    backlog(0) = 0
+        shipments = min(backlog + incoming_orders, inventory)
+        expected_orders = smooth(incoming_orders, 2)
+        orders_placed = order(rule, expected_orders, target - inventory + backlog)
 
-    shipments = min(backlog + incoming_orders, inventory)
-    expected_orders = smooth(incoming_orders, 2)
-    orders_placed = max(0, expected_orders + (target - inventory + backlog) / τ_adjust)
+        return (; orders_placed, shipments)
+    end
 end
 ```
 
-A model then connects components by their inputs and outputs:
+A model connects components by calling them:
 
 ```julia
 # file: beer_game.jl
 include("components/stage.jl")
 
-@model beer_game begin
+beer_game(; rule = Anchoring()) = @model begin
     @time t ∈ 0:1:52                               # weeks
 
     customer_orders = 4 + 4 * (t ≥ 4)
 
-    retailer = stage(incoming_orders = customer_orders, deliveries = wholesaler.shipments)
-    wholesaler = stage(incoming_orders = retailer.orders_placed, deliveries = factory.shipments)
-    factory = stage(incoming_orders = wholesaler.orders_placed,
-                    deliveries = delay(factory.orders_placed, 2; order = 1); target = 20)
+    retailer = stage(customer_orders, wholesaler.shipments; rule)
+    wholesaler = stage(retailer.orders_placed, factory.shipments; rule)
+    factory = stage(wholesaler.orders_placed, delay(factory.orders_placed, 2); rule, target = 20)
 end
 ```
 
+The equations inside `@model` are declarative, so components may refer to each
+other's outputs in any order (`retailer` uses `wholesaler.shipments`, defined on
+the next line); the stocks break the loops, as in any SD model.
+
 What this gives:
-- **Reuse.** One `stage` file serves all three stages. Changing it changes them all.
-- **Parameters per instance.** `; target = 20` overrides a `@param` for one
-  instance only. Scenarios can override any `@param` in any instance
-  (`factory.target`).
-- **Qualified names.** Results keep the component path (`retailer.inventory`,
-  `factory.backlog`), so the three inventories don't clash.
-- **Runs on its own.** `run_model(stage)` uses the input defaults. Each component
-  can be tested alone before it is connected.
-- **Arrays of components.** `stages = [stage(...) for k in 1:4]`, where each
-  stage's `incoming_orders` is the previous one's `orders_placed`, for chains of
-  any length.
-- **Swappable.** A component can be replaced by any other with the same inputs
-  and outputs (e.g. a stage with a different ordering rule) without touching
-  the rest of the model.
+- **Reuse.** One `stage` function serves all three stages.
+- **Parameters per instance** are keyword arguments (`target = 20`). Scenarios
+  can override any of them by path (`factory.target`).
+- **Qualified names.** Results keep the component path (`retailer.inventory`).
+- **Runs on its own.** `run_model(stage())` uses the default inputs, so each
+  component is tested alone, with Julia's `Test`, before it is connected.
+- **Built with code.** Chains of any length are a comprehension or a loop;
+  components can take components as arguments (higher-order components):
+  ```julia
+  function supply_chain(demand; n = 4, link = stage)
+      @model begin
+          stages = [link(k == 1 ? demand : stages[k-1].orders_placed,
+                         k == n ? delay(stages[n].orders_placed, 2) : stages[k+1].shipments)
+                    for k in 1:n]
+      end
+  end
+  ```
 - **Nested.** A component can contain components, so a large model is a tree of
-  small files, each a page or less.
+  small functions in small files, gathered in a Julia module or package.
 
 When translating a Vensim model, the components follow PySD's `split_views`
-option: with `split_views=True`, each view (or subview, with
-`subview_sep`) becomes one component, in its own file. Its inputs are the
-variables it uses from other views, and its outputs are the ones other views use
-from it; the model file only connects them. Without `split_views`, the model is
-one component. This replaces today's `split_views` modules, which share one flat
-namespace.
+option: with `split_views=True`, each view (or subview, with `subview_sep`)
+becomes one component function in its own file. Its inputs are the variables it
+uses from other views, and its outputs are the ones other views use from it; the
+model file only connects them. Without `split_views`, the model is one
+component. Vensim macros also become component functions.
+
+### Composability and multiple dispatch
+
+The DSL follows Julia's usual design: **small functions, abstract types and
+multiple dispatch, generic code**. The `@model` macro only provides the
+equation syntax (`∂t`, `x(0)`, `x(t - τ)`); everything else is plain functions
+and types, so it composes with the rest of the Julia ecosystem.
+
+**Model variants by dispatch.** Instead of `IF THEN ELSE` switches between
+policies, a policy is a type and its behaviour is a method. Adding a policy is
+adding a method; no model code changes:
+
+```julia
+abstract type OrderingRule end
+
+"Sterman's anchoring and adjustment"
+Base.@kwdef struct Anchoring <: OrderingRule
+    α::Float64 = 0.25                              # fraction of the gap ordered per week
+end
+
+"Order exactly what is missing"
+struct OrderUpTo <: OrderingRule end
+
+order(r::Anchoring, expected, gap) = max(0, expected + r.α * gap)
+order(::OrderUpTo, expected, gap) = max(0, expected + gap)
+
+run_model(beer_game(rule = OrderUpTo()))
+```
+
+**Stateful operators are types with methods.** `smooth`, `delay`, `trend`,
+`x(t - τ)` and XMILE conveyors all implement one small interface, and new
+operators (from users or packages) plug in on equal terms with the built-in
+ones, instead of being cases inside the translator:
+
+```julia
+abstract type StatefulOperator end
+
+struct Smooth <: StatefulOperator
+    order::Int
+end
+
+nstates(op::Smooth) = op.order                     # how many hidden stocks
+initial_states(op::Smooth, x, τ; init = x) = fill(init, op.order)
+function rates!(d, op::Smooth, s, x, τ)             # their rates of change
+    k = op.order / τ
+    d[1] = k * (x - s[1])
+    for i in 2:op.order
+        d[i] = k * (s[i-1] - s[i])
+    end
+end
+output(::Smooth, s) = s[end]
+
+smooth(x, τ; order = 1, init = x) = apply(Smooth(order), x, τ; init)
+```
+
+**Backends and formats by dispatch.** One model, several targets, chosen by a
+type: `build(model, ODEStyle())`, `build(model, MTKStyle())`,
+`CoupledODEs(model)` (DynamicalSystems extension). Data sources are types too
+(`ExcelSource`, `CSVSource`, `NetCDFSource`); a new format is a new method of
+`read_data`, and **anything callable** works as a lookup or time series
+(`demand = t -> 100 + 10sin(t)`, an `Interpolations.jl` object, a fitted model).
+
+**Generic code.** Generated and built-in code never fixes the number type
+(no `Float64` buffers, no `zeros(n)` without `eltype`), so models run with
+any `Real`:
+- `ForwardDiff.Dual`: sensitivities and gradients for calibration with
+  Optimization.jl;
+- `Measurements.jl`: `τ = 10 ± 1` propagates uncertainty to every result;
+- `Unitful.jl` quantities, `Float32`, `BigFloat`.
+
+**Standard interfaces instead of our own.** A model gives a SciML `ODEProblem`
+(so every solver, ensembles, sensitivity analysis and parameter estimation
+work); results implement the Tables.jl interface (`DataFrame(results)`) and are
+DimensionalData stacks; plotting is a Makie/Plots recipe. Optional integrations
+are package extensions, loaded only when the other package is.
 
 ### From Vensim to the DSL
 
@@ -602,8 +690,8 @@ The translator rewrites each Vensim construct as the mathematics it stands for:
 | `x[a] = …; x[b] = …` | slices `x[a]`, `x[b:c]`, or named subsets |
 | `:EXCEPT:` | a slice or subset of the remaining elements |
 | `TIME`, `TIME STEP`, `INITIAL TIME`, `FINAL TIME` | `t`, `Δt`, `first(t)`, `last(t)` from `@time` |
-| Vensim macros | components |
-| Views, with `split_views=True` | one component per view (or subview) |
+| Vensim macros | component functions |
+| Views, with `split_views=True` | one component function per view (or subview) |
 
 Where Vensim's semantics differ from the plain mathematics, the helper keeps
 Vensim's behaviour, so translated models still match the reference outputs. For
@@ -701,88 +789,76 @@ already) and biflows (any flow in the DSL can be negative).
 
 ## 5. A model editor (UI)
 
-The DSL should be the base for a **visual editor**: a web interface to build a
-model from scratch or edit an existing one, as a stock-and-flow diagram next to
-its equations, with results that update as values change. The editor doesn't
-need to exist soon, but it shapes the design now.
+A visual editor should make it possible to build a model from scratch or edit an
+existing one: a stock-and-flow diagram next to the equations, with results that
+update as values change. The editor doesn't need to exist soon, but the design
+should leave room for it. **The editor adapts to the language, not the other way
+round**: nothing in the DSL is restricted or reshaped for it, and a model written
+by a mathematician or a Julia developer, with their own functions, types and
+dispatch, opens in the editor as it is.
 
-### One model, several views
+### The editor reads the built model, not the text
 
-The DSL text, the diagram and the generated ODE and MTK code are all views of
-**one model description**: a small data structure (the "model graph") with,
-for each variable, its name, kind (stock, flow, auxiliary, parameter, lookup,
-data), equation, dimensions, unit and description, and for each component its
-inputs, outputs and contents.
+A built model is a Julia value. PySD.jl gives it a small **query interface** of
+generic functions, which the editor (and the REPL, tests, documentation tools)
+use:
 
+```julia
+variables(m)          # every variable, with kind, dimensions, unit, description
+equations(m)          # the equation of each variable
+components(m)         # the component tree, with inputs and outputs
+parameters(m)         # names, values, defaults
+dependencies(m)       # who uses whom: the arrows of the diagram
+source_location(m, :inventory)   # file and line where it is defined
 ```
-            ┌──────────── edit ────────────┐
-DSL text ⇄ model graph ⇄ editor (diagram, equation panels, tables)
-                │
-                ├─→ ODE style (generated)
-                ├─→ MTK style (generated)
-                └─→ results, LaTeX, documentation
-```
 
-- The `@model` macro, the editor and the translator all read and write the same
-  model graph, so a model made in the editor is an ordinary DSL file, and a DSL
-  file opens in the editor.
-- **Round trip without loss.** DSL → model graph → DSL gives the same text,
-  docstrings and comments included. The DSL is written back by a formatter with
-  one fixed layout, so an edit in the editor changes only the lines it touches,
-  and files stay readable and `git diff`-able.
-- **ODE and MTK code are generated, not edited.** The editor can show them, but
-  changes are made in the model and the code is regenerated. Reading arbitrary
-  hand-edited Julia back into a model graph is not proposed.
+The kinds the editor draws come from the model itself: stocks are the `∂t`
+equations, flows their terms, components the function calls, lookups the
+callable values. Nothing has to be declared for the editor's sake. Anything that
+implements the interface, including models built by other packages, can be
+shown.
 
-### What this asks of the DSL
+### Editing keeps the author's code
 
-- **Every construct maps to the model graph.** The `@model` block contains only
-  DSL constructs (equations, `@dims`, `@param`, `@input`/`@output`, components).
-  General Julia functions go in normal Julia code next to the model and are called
-  from it. The editor shows them as functions, with their signature, and does not
-  edit them.
-- **Equations in any order** (already a rule), so the editor can add a variable
-  anywhere.
-- **Names are identities.** A variable's name identifies it everywhere (diagram,
-  results, scenarios). Renaming is one operation that updates every reference.
-- **Kinds are visible in the syntax.** `∂t(x)` is a stock, `@param` a parameter,
-  `piecewise_linear` a lookup, `data(…)` data. The editor can draw them without
-  guessing, and flows are the terms of a `∂t` equation (`+` in, `−` out).
-- **Layout separate from the equations.** Diagram positions, colours and the
-  routing of arrows go in a side file per component (`stage.layout.toml`), not
-  in the model text (Vensim mixes its sketch into the `.mdl`). A model without a
-  layout file gets an automatic layout. Translated models keep their Vensim
-  sketch positions, which PySD already parses for `split_views`.
-- **Components are boxes with ports.** In the diagram a component is a box, its
-  `@input`s and `@output`s are its connection points, and opening it shows its own
-  diagram. Translated models with `split_views` open with one box per view.
-- **Arrays show their dimensions.** A variable over `(sector, sector1)` shows its
-  dimensions in the diagram, and its values are edited as a labelled table
-  (DimArray), not as a flat list.
+- **Values and parameters** (constants, lookups, scenario tables, dimension
+  labels) are edited in forms and tables. The editor writes them back into the
+  source with minimal text edits, using [JuliaSyntax.jl](https://github.com/JuliaLang/JuliaSyntax.jl),
+  which keeps the exact position of every token. The author's formatting and
+  comments stay as they were; no formatter rewrites the file.
+- **Equations** are edited as text, in the author's notation, in an equation
+  panel with completion of variable names.
+- **New variables and components** drawn in the diagram are written as new
+  lines of DSL in the right component function.
+- **Code the editor doesn't understand** (user functions, types, dispatch
+  methods, loops that build components) is shown as code and edited as code.
+  It is still visible in the diagram through its result: the components and
+  variables it creates.
+
+### Layout
+
+Diagram positions are not part of the model. They go in an optional side file
+next to each component file (`stage.layout.toml`); a model without one gets an
+automatic layout. The model files stay pure Julia and mathematics. Translated
+models get their layout from the Vensim sketch, which PySD already parses for
+`split_views`.
 
 ### What the editor can offer
 
-- **Instant feedback while editing**: dimension checks, unit checks (if units
-  are adopted), undefined names, and algebraic loops named variable by variable
-  (`a → b → a`).
+- **Instant checks**: dimensions, units (if adopted), undefined names, and
+  algebraic loops named variable by variable (`a → b → a`).
 - **Fast "what if"**: parameters live in `p`, so a slider changes a parameter
-  and re-runs the compiled ODE model in milliseconds, without compiling again.
-  Only structural changes (new variables or equations) recompile.
-- **Scenarios** edited as tables, run side by side, with one plot per variable
-  and one line per scenario.
-- **Equations as mathematics**: the model graph is turned into LaTeX
-  (Latexify.jl), and with MTK into the simplified system.
+  and re-runs the compiled model in milliseconds. Only structural changes
+  recompile.
+- **Scenarios** edited as tables and run side by side.
+- **Equations as mathematics**: rendered with Latexify.jl, or from MTK as the
+  simplified system.
 
 ### How it could be built
 
-- **Back end in Julia**: a small service around PySD.jl that loads a model
-  graph, checks it, compiles the ODE style once, runs scenarios and returns
-  results. The same functions work in the REPL.
-- **Front end in the browser**: a diagram editor and equation panels that talk to
-  the back end through a plain JSON format of the model graph. That format is
-  also an open format for other tools.
-- First steps that are useful without a UI: the model graph type, the
-  DSL ⇄ graph round trip with the formatter, and `@model` built on top of them.
+A Julia back end (the query interface plus building and running) and a
+browser front end that talks to it in JSON. The first useful steps don't need a
+UI: the query interface, which also helps documentation, testing and model
+inspection in the REPL.
 
 ---
 
@@ -819,29 +895,28 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 1. **Three styles**, chosen with `translate_to_julia(model; style = "ode" | "mtk" | "dsl")`, all checked against the reference outputs by the same test matrix (`tests/pytest_builders/pytest_julia_reference.py` in PySD).
 2. **ODE style:** named state (ComponentArrays), parameters in `p` (`Params`), a single `model!(d, s, p, t)`, constants written once, array operations where dimensions line up and comprehensions where they don't, stateful functions as stage-stock helpers in PySD.jl.
 3. **Results** keep Vensim's variable names and labelled dimensions (as `save_results` does since PySD.jl 0.2.0).
-4. **The DSL** is the long-term target: plain Julia and mathematical notation (no Vensim syntax), readable names, arrays with named dimensions (DimensionalData.jl, as xarray in Python PySD), and models built from components with declared inputs and outputs. It is built in PySD.jl as a macro that generates the ODE and MTK forms. The translator then emits DSL text, with components following `split_views` (one per view) and one per Vensim macro.
+4. **The DSL** is the long-term target: plain Julia and mathematical notation (no Vensim syntax), readable names, arrays with named dimensions (DimensionalData.jl, as xarray in Python PySD), and models built from component functions, with variants by multiple dispatch and generic code. `@model` only adds the equation syntax; it is built in PySD.jl and generates the ODE and MTK forms. The translator then emits DSL text, with components following `split_views` (one per view) and one per Vensim macro.
 5. **DynamicalSystems.jl** integration (`CoupledODEs`) replaces building our own step-by-step, parameter-change and state-saving features. It is an **optional dependency**: a package extension (`[weakdeps]` + `[extensions]` in PySD.jl's `Project.toml`), like the existing ModelingToolkit extension. `using PySD, DynamicalSystemsBase` adds e.g. `CoupledODEs(model)`; without it, DynamicalSystems is not installed or loaded.
-6. **A model graph** (one data structure per model, with a JSON form) is the single description that the DSL, the translator and a future visual editor read and write; ODE and MTK code are generated from it, never edited by hand. Diagram layout goes in a side file per component.
+6. **A visual editor adapts to the language**: it reads built models through a query interface of generic functions (`variables`, `equations`, `components`, …) and edits the source with minimal text edits (JuliaSyntax.jl), keeping the author's code and formatting. Nothing in the DSL is restricted for it. Diagram layout goes in an optional side file per component.
 
 ## Open questions
 
 - **Names of helpers in the ODE style:** keep the `pysd_` prefix (`pysd_step`), or use the DSL's lowercase names (`smooth`, `delay`, in a module to avoid clashes)? The DSL itself uses Julia and mathematical notation (`5 * (t ≥ 5)`, `smooth(x, τ)`).
 - **Names of variables:** snake_case (as now) or the original Vensim names via `var"Stock A"`? Snake_case with the Vensim name kept as a label for results is proposed.
-- **Component connections:** as keyword arguments (`stage(incoming_orders = …)`, as proposed), or separate `connect(a.output, b.input)` lines as in ModelingToolkit?
+- **Component connections:** by calling the component function with its inputs (`stage(customer_orders, wholesaler.shipments)`, as proposed), or separate `connect(a.output, b.input)` lines as in ModelingToolkit?
 - **MTK:** keep generating it from the translator, or only from the DSL?
 - **Units:** checked (e.g. with Unitful.jl) or documentation only?
-- **Editor front end:** a web app talking to a Julia back end through the JSON model graph (as proposed), or an editor written in Julia (e.g. Bonito.jl with WGLMakie)?
-- **Layout files:** TOML per component (as proposed), or one file per model?
+- **Editor front end:** a web app talking to a Julia back end in JSON (as proposed), or an editor written in Julia (e.g. Bonito.jl with WGLMakie)?
 - **Scenarios:** in Julia only (`@scenarios`), or also in a file (TOML) that can be edited without touching the model?
 
 ## Plan
 
 1. Agree on this proposal (or change it).
 2. ODE style in the translator, step by step, guarded by the reference tests.
-3. Model graph type, DSL ⇄ graph round trip with a formatter, and the DSL macro in PySD.jl on top of it, for a first set of constructs (stocks, auxiliaries, arrays, sums, `smooth`/`delay`, components), generating the ODE style.
+3. DSL macro in PySD.jl for a first set of constructs (stocks, auxiliaries, arrays, sums, the `StatefulOperator` interface with `smooth`/`delay`, component functions), generating the ODE style, with generic number types tested (ForwardDiff, Measurements).
 4. Translator emits the DSL; MTK generated from the DSL.
 5. DynamicalSystems.jl integration as a package extension (optional dependency), and documentation.
-6. Visual editor on top of the model graph: first a viewer (diagram, equations, results), then editing.
+6. Query interface for built models (useful in the REPL and for documentation), then a visual editor on top of it: first a viewer (diagram, equations, results), then editing.
 
 ## Related work
 - [Vensim](https://vensim.com/) `.mdl`: equations, subscripts and function library.
@@ -850,4 +925,5 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 - [BPTK-Py](https://github.com/transentis/bptk_py): SD DSL in Python; the source of the scenario, strategy, session, non-negative stock and conveyor ideas.
 - [DynamicalSystems.jl](https://juliadynamics.github.io/DynamicalSystemsDocs.jl/): standard interface for running and analysing dynamical systems.
 - [ComponentArrays.jl](https://github.com/jonniedie/ComponentArrays.jl): named, shaped state vectors.
+- [JuliaSyntax.jl](https://github.com/JuliaLang/JuliaSyntax.jl): Julia's parser with exact source positions; lets an editor change a model's source without reformatting it.
 - [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl): arrays with named dimensions and labels, Julia's closest match to xarray; used by the DSL.
