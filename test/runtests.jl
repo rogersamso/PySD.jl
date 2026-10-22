@@ -327,6 +327,44 @@ end  # HAS_TEST_MODELS
     @test pysd_xlsx_read_series(tab, "Sheet1", "A", "B2")[2] == [1.0, 2.0, 4.0]
 end
 
+@testset "VECTOR SELECT as Python PySD" begin
+    sel = [0, 1, 1, 0]
+    v = [10.0, 2.0, 3.0, 4.0]
+    @test pysd_vector_select(sel, v, -1, 0, 0) == 5.0          # sum of sel*expr
+    @test pysd_vector_select(sel, v, -1, 1, 0) == 6.0          # product
+    @test pysd_vector_select(sel, v, -1, 2, 0) == 2.0
+    @test pysd_vector_select(sel, v, -1, 3, 0) == 3.0
+    @test pysd_vector_select(sel, v, -1, 4, 0) == 2.5
+    @test pysd_vector_select([0, 2, 0, 0], v, -1, 0, 0) == 4.0  # weighted
+    @test pysd_vector_select([0, 2, 0, 0], v, -1, 6, 0) == 2.0  # unweighted
+    @test pysd_vector_select([0, 2, 0, 0], v, -1, 5, 0) == 4.0  # expr ^ sel
+    @test pysd_vector_select(zeros(4), v, -12345, 0, 0) == -12345.0
+    @test_throws DomainError pysd_vector_select(zeros(4), v, -1, 0, 1)
+    @test_throws DomainError pysd_vector_select(sel, v, -1, 0, 2)
+    # a selection matrix against a vector over its last dimension
+    m = [1 0; 0 1; 0 0]
+    @test pysd_vector_select(m, [5.0, 7.0]', -1, 0, 0) == 12.0
+    # the old 4-argument method is kept for models generated for 0.2.2
+    @test pysd_vector_select([0, 1], [1.0, 2.0], -1.0, 1) == 2.0
+end
+
+@testset "raw DATA and Excel series with missing values" begin
+    raw = pysd_build_tab_itp([1.0, 2.0, 3.0], [0.0, 1.0, 2.0], :raw)
+    @test raw(1.0) == 2.0
+    @test isnan(raw(0.5))
+    xs, ys = PySD._clean_series([3.0, NaN, 1.0, 2.0, 4.0], [30.0, 99.0, 10.0, NaN, 40.0])
+    @test xs == [1.0, 2.0, 3.0, 4.0]
+    @test ys == [10.0, 20.0, 30.0, 40.0]
+    xs, ys = PySD._clean_series([1.0, 2.0, 3.0], [NaN, 5.0, NaN], :hold_backward)
+    @test ys == [5.0, 5.0, 5.0]
+    if HAS_TEST_MODELS
+        xlsx = joinpath(TEST_MODELS, "get_with_missing_values_xlsx", "input.xlsx")
+        xs, ys = pysd_xlsx_read_series(xlsx, "Hoja1", "10", "A9")
+        @test issorted(xs)
+        @test !any(isnan, xs) && !any(isnan, ys)
+    end
+end
+
 @testset "save_results" begin
     dim_labels = Dict("A" => ["a1", "a2", "a3"], "B" => ["b1", "b2"], "C" => ["c1", "c2"])
     # state vector: scalar, then a 3x2 stock, then a 3x2x2 stock (column-major)

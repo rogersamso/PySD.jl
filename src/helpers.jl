@@ -159,6 +159,45 @@ end
 
 # VECTOR SORT ORDER returns 0-based positions (as Vensim and Python PySD);
 # VECTOR REORDER takes them.
+"""
+    pysd_vector_select(sel, expr, missing_vals, numerical_action, error_action)
+
+Vensim's VECTOR SELECT, as Python PySD: the elements of `expr` where `sel` is
+non-zero are combined by `numerical_action` (0 sum of sel*expr, 1 product of
+sel*expr, 2 min of sel*expr, 3 max of sel*expr, 4 mean of sel*expr,
+5 product of expr^sel, 6 sum, 7 product, 8 min, 9 max, 10 mean of expr).
+`missing_vals` is returned when `sel` is all zeros.  `error_action` 1 (or 3)
+raises when `sel` is all zeros, 2 (or 3) when it has more than one non-zero.
+`sel` and `expr` are broadcast together (e.g. a matrix and a vector).
+"""
+function pysd_vector_select(sel, expr, missing_vals, numerical_action, error_action)
+    S = sel .+ zero.(expr)
+    E = expr .+ zero.(sel)
+    nz = S .!= 0
+    if !any(nz)
+        error_action in (1, 3) &&
+            throw(DomainError(sel, "VECTOR SELECT: all the values of the selection array are 0"))
+        return Float64(missing_vals)
+    end
+    count(nz) > 1 && error_action in (2, 3) &&
+        throw(DomainError(sel, "VECTOR SELECT: more than one non-zero value in the selection array"))
+    action = Int(numerical_action)
+    vals = if action in 0:4
+        (S .* E)[nz]
+    elseif action == 5
+        (E .^ S)[nz]         # as Vensim (its help says sel ^ expr)
+    elseif action in 6:10
+        E[nz]
+    else
+        throw(ArgumentError("VECTOR SELECT: numerical_action must be 0 to 10, got $numerical_action"))
+    end
+    action in (0, 6) && return Float64(sum(vals))
+    action in (1, 5, 7) && return Float64(prod(vals))
+    action in (2, 8) && return Float64(minimum(vals))
+    action in (3, 9) && return Float64(maximum(vals))
+    return Float64(sum(vals) / length(vals))
+end
+
 pysd_vector_sort_order(vec, dir) =
     Float64.(ifelse(dir > 0, sortperm(vec), sortperm(vec, rev=true)) .- 1)
 
@@ -341,11 +380,26 @@ function pysd_tab_read_series(filepath::AbstractString, colname::AbstractString)
 end
 
 """
+DATA with the :RAW: keyword, as Python PySD: the value at the data times only,
+NaN at any other time.
+"""
+struct _RawSeries
+    times::Vector{Float64}
+    vals::Vector{Float64}
+end
+
+function (r::_RawSeries)(t)
+    i = findfirst(x -> isapprox(x, t; atol=1e-10), r.times)
+    return i === nothing ? NaN : r.vals[i]
+end
+
+"""
     pysd_build_tab_itp(vals, times, method)
 
 Build a DataInterpolations interpolation object from `(times, vals)` using
 the Vensim interpolation `method` symbol:
-- `:interpolate` or `:raw`  → `LinearInterpolation`
+- `:interpolate`            → `LinearInterpolation`
+- `:raw`                    → the value at the data times, NaN in between
 - `:hold_backward`           → `ConstantInterpolation` (hold previous value)
 - `:look_forward`            → `ConstantInterpolation(dir=:right)` (next value)
 """
@@ -359,7 +413,9 @@ function pysd_build_tab_itp(vals::AbstractVector, times::AbstractVector, method:
             dir=:right,
             extrapolation_left=ExtrapolationType.Constant,
             extrapolation_right=ExtrapolationType.Constant)
-    else  # :interpolate, :raw
+    elseif method === :raw
+        return _RawSeries(Float64.(times), Float64.(vals))
+    else  # :interpolate
         return LinearInterpolation(vals, times;
             extrapolation_left=ExtrapolationType.Constant,
             extrapolation_right=ExtrapolationType.Constant)
