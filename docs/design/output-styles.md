@@ -280,10 +280,15 @@ Rules:
   as a Julia range (initial time : time step : final time).
 - **Stocks are differential equations**: `∂t(x) = inflow - outflow` with the
   initial value as `x(0) = x₀`. There is no `INTEG`.
-- **Arrays are arrays.** Dimensions are declared once, equations over whole
-  arrays use Julia's broadcasting (`.+`, `.*`) or linear algebra (`A' * x`), and
-  index notation (`x[i, j]`, `∑`) is there when it is clearer. Parts of an array
-  are slices or named subsets, not `:EXCEPT:`.
+- **Arrays have named dimensions**, as `xarray` gives Python PySD. Each
+  dimension (a Vensim subscript range) is declared once with its element labels,
+  and every array knows its dimensions by name
+  ([DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl), see
+  [Arrays with named dimensions](#arrays-with-named-dimensions)). Equations are
+  written for whole arrays and line up by dimension *name*, not position, so
+  there are no index letters and no loops. Elements are picked by label
+  (`io_matrix[sector = At(industry)]`). Parts of an array are selections or
+  named subsets, not `:EXCEPT:`.
 - **Functions are functions.** A lookup is a piecewise-linear function `f`, used
   as `f(x)`. A fixed delay is the delayed value `x(t - τ)`.
 - **Stateful operators** (smoothing, delays of material, trends) are functions
@@ -332,16 +337,17 @@ end
     @dims columns = (column_1, column_2)
 
     "Rate A [1/month]"
-    rate_a::Matrix{entries, columns} = [0.01 0.02; 0.03 0.04; 0.05 0.06]
+    rate_a = @on (entries, columns) [0.01 0.02; 0.03 0.04; 0.05 0.06]
 
     "Stock A [units]: each element grows linearly"
     ∂t(stock_a) = rate_a
-    stock_a(0) = [1 2; 3 4; 5 6]
+    stock_a(0) = @on (entries, columns) [1 2; 3 4; 5 6]
 end
 ```
 
-The dimensions come from the declared shapes, so `∂t(stock_a) = rate_a` is a
-3 × 2 array equation, with no loop and no index.
+`@on (entries, columns)` attaches the dimensions to the values once. After that
+`stock_a` is a 3 × 2 array over `entries` and `columns`, and `∂t(stock_a) =
+rate_a` is one array equation, with no loop and no index.
 
 ### `subscript_transposition` (sums over a dimension)
 
@@ -349,22 +355,28 @@ The dimensions come from the declared shapes, so `∂t(stock_a) = rate_a` is a
 @model subscript_transposition begin
     @time t ∈ 0:1:1
 
-    @dims sectors = (agriculture, industry, transport, tourism, comercial)
+    @dims sector = (agriculture, industry, transport, tourism, comercial)
+    @dims sector1 = sector                         # a second dimension over the same elements
 
-    input::Vector{sectors} = [1, 10, 5, 7, 9]
-    io_matrix::Matrix{sectors, sectors} = [ 1  2  3  4  5;
-                                           10 20 30 40 50;
-                                            1  2  3  4  5;
-                                            2  3  4  5  6;
-                                           -1  2 -3  4 -5]
+    input = @on sector [1, 10, 5, 7, 9]
+    io_matrix = @on (sector, sector1) [ 1  2  3  4  5;
+                                       10 20 30 40 50;
+                                        1  2  3  4  5;
+                                        2  3  4  5  6;
+                                       -1  2 -3  4 -5]
 
-    output = io_matrix' * input                    # output[j] = ∑ᵢ input[i] io_matrix[i, j]
-    output2 = io_matrix * input                    # output2[j] = ∑ᵢ io_matrix[j, i] input[i]
+    "output[sector1] = Σ over sector of input × io_matrix"
+    output = sum(input .* io_matrix; dims = sector)
 
-    # or with indices, when the sum is not a matrix product:
-    #   output[j] = ∑(input[i] * io_matrix[i, j] for i ∈ sectors)
+    "the same with the roles of the two dimensions swapped"
+    output2 = sum(input .* swapdims(io_matrix, sector => sector1, sector1 => sector); dims = sector)
 end
 ```
+
+`input .* io_matrix` lines up `input`'s `sector` with `io_matrix`'s `sector`
+(by name, whatever the order of the dimensions), and `sum(…; dims = sector)`
+leaves an array over `sector1`. This is xarray's behaviour, and the Vensim
+`SUM(input[sector!] * io_matrix[sector!, sector1])` read literally.
 
 ### `smooth` (stateful operators)
 
@@ -422,12 +434,51 @@ Vensim defines parts of an array with separate equations and `:EXCEPT:`. In
 the DSL these are slices, or named subsets of a dimension:
 
 ```julia
-@dims ages = (young, adult, old)
+@dims age = (young, adult, old)
+@subset older = age[adult:old]                     # a subrange, by label
 
-∂t(population[young]) = births - ageing[young]
-∂t(population[adult:old]) = ageing[young:adult] .- ageing[adult:old]   # each age from the one below
+∂t(population[age = At(young)]) = births - ageing[age = At(young)]
+∂t(population[age = older]) = previous(ageing, age)[age = older] .- ageing[age = older]
+# previous(x, age): each element takes the value of the one before it along age
 ageing = population ./ duration
 ```
+
+### Arrays with named dimensions
+
+Python PySD keeps subscripted variables as `xarray.DataArray`s: arrays whose
+dimensions have names and labels, and whose operations line up dimensions by
+name. The DSL works the same way. Three Julia packages were compared (each
+checked with a vector over `a` times a matrix over `a` and `b`, and with the matrix's
+dimensions in the other order):
+
+| Package | Named dimensions | Labels | Lines up by name in `.*`, `.+` | Reduce by name | Notes |
+|---|---|---|---|---|---|
+| [NamedArrays.jl](https://github.com/davidavdav/NamedArrays.jl) 0.10.5 | yes | yes | no: `x[a] .* m[a, b]` fails (DimensionMismatch) | no, by position only (`dims = 1`) | labels for indexing and printing |
+| [AxisKeys.jl](https://github.com/mcabbott/AxisKeys.jl) 0.2.17 | yes (NamedDims) | yes | only in the same order: `x[a] .* m[b, a]` fails | `sum(x; dims = :a)` | light |
+| [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl) 0.30.2 | yes | yes (lookups, selectors) | yes, in any order (`broadcast_dims`) | `sum(x; dims = Sector)` | closest to xarray; datasets (`DimStack`), NetCDF through Rasters.jl / YAXArrays.jl |
+
+**Proposed: DimensionalData.jl.** Tested on `subscript_transposition`
+(Julia 1.12, DimensionalData 0.30.2):
+- `sum(broadcast_dims(*, input, io_matrix); dims = Sector)` gives `output`
+  over `sector1`, the same as the Vensim reference;
+- after renaming the two dimensions, the same line gives `output2`;
+- with `io_matrix`'s dimensions stored in the other order, the result is the same;
+- `io_matrix[Sector = At(:industry), Sector1 = At(:transport)]` picks one element by label.
+
+Speed: in an ODE right-hand side (200 × 50 stock times a weight over the second
+dimension), named-dimension broadcasting took 15 µs per evaluation against 8 µs
+for plain arrays, because `broadcast_dims` allocates. So the names are used where
+people see them, and are gone where the solver runs:
+- parameters, initial values, data and **results** are DimArrays (results as a
+  `DimStack`, like an xarray Dataset, saved to NetCDF with their dimension names
+  and labels);
+- the `@model` macro checks and lines up the dimensions **once, when the model is
+  built**, and generates plain-array code for `model!` (the ODE style above), so
+  the solver loop costs the same as hand-written Julia.
+
+Element labels follow Vensim's (`agriculture`, `entry_1`). A dimension used twice
+in one array (Vensim's subscript mapping, e.g. `sector` and `sector1`) is a second
+dimension over the same labels.
 
 ### Components
 
@@ -495,9 +546,12 @@ What this gives:
 - **Nested.** A component can contain components, so a large model is a tree of
   small files, each a page or less.
 
-When translating a Vensim model, each view becomes a component. Its inputs are
-the variables it uses from other views, and its outputs are the ones other views
-use from it. This replaces today's `split_views` modules, which share one flat
+When translating a Vensim model, the components follow PySD's `split_views`
+option: with `split_views=True`, each view (or subview, with
+`subview_sep`) becomes one component, in its own file. Its inputs are the
+variables it uses from other views, and its outputs are the ones other views use
+from it; the model file only connects them. Without `split_views`, the model is
+one component. This replaces today's `split_views` modules, which share one flat
 namespace.
 
 ### From Vensim to the DSL
@@ -513,8 +567,12 @@ The translator rewrites each Vensim construct as the mathematics it stands for:
 | `IF THEN ELSE(c, a, b)` | `ifelse(c, a, b)` |
 | `XIDZ(a, b, x)`, `ZIDZ(a, b)` | `b == 0 ? x : a / b`, `b == 0 ? 0 : a / b` |
 | `MIN`, `MAX`, `ABS`, `EXP`, `LN`, `SQRT`, `INTEGER` | `min`, `max`, `abs`, `exp`, `log`, `sqrt`, `trunc` |
-| `SUM(x[i!])`, `VMAX(x[i!])` | `sum(x)`, `maximum(x)` (or `∑(… for i ∈ dim)`) |
-| `SUM(a[i!] * m[i!, j])` | `m' * a` |
+| Subscript range `dim: a, b, c` | `@dims dim = (a, b, c)` |
+| Subrange, subscript mapping | `@subset sub = dim[b:c]`, `@dims dim2 = dim` |
+| `x[dim] = 1, 2, 3` | `x = @on dim [1, 2, 3]` |
+| `SUM(x[i!])`, `VMAX(x[i!])` | `sum(x; dims = i)`, `maximum(x; dims = i)` |
+| `SUM(a[i!] * m[i!, j])` | `sum(a .* m; dims = i)` |
+| `x[elem]` | `x[dim = At(elem)]` |
 | `lookup(x)` with inline points | `f = piecewise_linear(x₁ => y₁, …)`, `f(x)` |
 | `SMOOTH`, `SMOOTHI`, `SMOOTH3`, `SMOOTH3I`, `SMOOTH N` | `smooth(x, τ; order, init)` |
 | `DELAY1`, `DELAY3`, `DELAY N` | `delay(x, τ; order, init)` |
@@ -525,7 +583,7 @@ The translator rewrites each Vensim construct as the mathematics it stands for:
 | `:EXCEPT:` | a slice or subset of the remaining elements |
 | `TIME`, `TIME STEP`, `INITIAL TIME`, `FINAL TIME` | `t`, `Δt`, `first(t)`, `last(t)` from `@time` |
 | Vensim macros | components |
-| Views | components, connected by the variables they share |
+| Views, with `split_views=True` | one component per view (or subview) |
 
 Where Vensim's semantics differ from the plain mathematics, the helper keeps
 Vensim's behaviour, so translated models still match the reference outputs. For
@@ -654,16 +712,14 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 1. **Three styles**, chosen with `translate_to_julia(model; style = "ode" | "mtk" | "dsl")`, all checked against the reference outputs by the same test matrix (`tests/pytest_builders/pytest_julia_reference.py` in PySD).
 2. **ODE style:** named state (ComponentArrays), parameters in `p` (`Params`), a single `model!(d, s, p, t)`, constants written once, array operations where dimensions line up and comprehensions where they don't, stateful functions as stage-stock helpers in PySD.jl.
 3. **Results** keep Vensim's variable names and labelled dimensions (as `save_results` does since PySD.jl 0.2.0).
-4. **The DSL** is the long-term target: plain Julia and mathematical notation (no Vensim syntax), readable names, and models built from components with declared inputs and outputs. It is built in PySD.jl as a macro that generates the ODE and MTK forms. The translator then emits DSL text, with one component per Vensim view and macro.
+4. **The DSL** is the long-term target: plain Julia and mathematical notation (no Vensim syntax), readable names, arrays with named dimensions (DimensionalData.jl, as xarray in Python PySD), and models built from components with declared inputs and outputs. It is built in PySD.jl as a macro that generates the ODE and MTK forms. The translator then emits DSL text, with components following `split_views` (one per view) and one per Vensim macro.
 5. **DynamicalSystems.jl** integration (`CoupledODEs`) replaces building our own step-by-step, parameter-change and state-saving features. It is an **optional dependency**: a package extension (`[weakdeps]` + `[extensions]` in PySD.jl's `Project.toml`), like the existing ModelingToolkit extension. `using PySD, DynamicalSystemsBase` adds e.g. `CoupledODEs(model)`; without it, DynamicalSystems is not installed or loaded.
 
 ## Open questions
 
 - **Names of helpers in the ODE style:** keep the `pysd_` prefix (`pysd_step`), or use the DSL's lowercase names (`smooth`, `delay`, in a module to avoid clashes)? The DSL itself uses Julia and mathematical notation (`5 * (t ≥ 5)`, `smooth(x, τ)`).
 - **Names of variables:** snake_case (as now) or the original Vensim names via `var"Stock A"`? Snake_case with the Vensim name kept as a label for results is proposed.
-- **DSL arrays:** declared shapes (`rate::Matrix{entries, columns}`) with whole-array equations, as proposed, or should every array equation also allow index letters (`rate[i, j]`)?
 - **Component connections:** as keyword arguments (`stage(incoming_orders = …)`, as proposed), or separate `connect(a.output, b.input)` lines as in ModelingToolkit?
-- **Translated components:** how small should the translator cut a model? One component per view, as proposed, or also per sector or per subscript range?
 - **MTK:** keep generating it from the translator, or only from the DSL?
 - **Units:** checked (e.g. with Unitful.jl) or documentation only?
 - **Scenarios:** in Julia only (`@scenarios`), or also in a file (TOML) that can be edited without touching the model?
@@ -683,3 +739,4 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 - [BPTK-Py](https://github.com/transentis/bptk_py): SD DSL in Python; the source of the scenario, strategy, session, non-negative stock and conveyor ideas.
 - [DynamicalSystems.jl](https://juliadynamics.github.io/DynamicalSystemsDocs.jl/): standard interface for running and analysing dynamical systems.
 - [ComponentArrays.jl](https://github.com/jonniedie/ComponentArrays.jl): named, shaped state vectors.
+- [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl): arrays with named dimensions and labels, Julia's closest match to xarray; used by the DSL.
