@@ -11,13 +11,16 @@ pysd_trunc(x::Real) = Base.trunc(x)
 
 pysd_log_base(x, base) = log(base, x)
 
-pysd_xidz(x, y, z) = ifelse(iszero(y), z, x / y)
-
-pysd_zidz(x, y) = ifelse(iszero(y), 0.0, x / y)
-
 # What Vensim considers zero.  Times accumulated by fixed Euler steps carry
 # rounding errors, so pulses start up to SMALL_VENSIM early (as in Python PySD).
 const SMALL_VENSIM = 1e-6
+
+# XIDZ and ZIDZ treat denominators smaller than SMALL_VENSIM as zero, as
+# Python PySD.  The comparison stays symbolic for MTK variables (iszero of
+# a symbolic variable is always false).
+pysd_xidz(x, y, z) = ifelse(abs(y) < SMALL_VENSIM, z, x / y)
+
+pysd_zidz(x, y) = ifelse(abs(y) < SMALL_VENSIM, 0.0, x / y)
 
 pysd_pulse(t_now, start, width) =
     ifelse((t_now >= start - SMALL_VENSIM) & (t_now < start + width), 1.0, 0.0)

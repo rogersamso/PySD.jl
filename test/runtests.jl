@@ -48,6 +48,13 @@ end
     @test pysd_xidz(6.0, 0.0, 5.0) == 5.0
     @test pysd_zidz(6.0, 3.0) == 2.0
     @test pysd_zidz(6.0, 0.0) == 0.0
+    @test pysd_zidz(6.0, 1e-9) == 0.0
+    @test pysd_xidz(6.0, -1e-9, 5.0) == 5.0
+    # symbolic denominator: the test is part of the expression
+    PySD.Symbolics.@variables y_zidz
+    @test isequal(PySD.Symbolics.substitute(pysd_zidz(6.0, y_zidz), Dict(y_zidz => 0.0)), 0.0)
+    @test isequal(PySD.Symbolics.substitute(pysd_xidz(6.0, y_zidz, 5.0), Dict(y_zidz => 0.0)), 5.0)
+    @test isequal(PySD.Symbolics.substitute(pysd_xidz(6.0, y_zidz, 5.0), Dict(y_zidz => 3.0)), 2.0)
     @test pysd_trunc(2.7) == 2.0
     @test pysd_trunc(-2.7) == -2.0
     @test pysd_log_base(8.0, 2.0) ≈ 3.0
