@@ -180,6 +180,55 @@ function _to_float(x)
     return NaN
 end
 
+"""
+    _clean_series(xs, ys, method=:interpolate)
+
+A series as Python PySD reads it from Excel: x values that are missing (blank
+or not a number) are dropped with their y values, the series is sorted by x,
+and missing y values are filled with `method` (`:interpolate` linearly,
+`:hold_backward` with the previous value, `:look_forward` with the next one;
+the first and last known values at the ends).  `:raw` data are not filled.
+`ys` is a vector, or a matrix with one series per row.
+"""
+function _clean_series(xs::AbstractVector, ys::AbstractVecOrMat, method::Symbol=:interpolate)
+    keep = findall(!isnan, xs)
+    order = keep[sortperm(xs[keep])]
+    xs_c = Float64.(xs[order])
+    ys_c = ys isa AbstractVector ? Float64.(ys[order]) : Float64.(ys[:, order])
+    method === :raw && return xs_c, ys_c
+    if ys_c isa AbstractVector
+        _fill_missing!(ys_c, xs_c, method)
+    else
+        for k in axes(ys_c, 1)
+            row = ys_c[k, :]
+            _fill_missing!(row, xs_c, method)
+            ys_c[k, :] = row
+        end
+    end
+    return xs_c, ys_c
+end
+
+function _fill_missing!(ys::AbstractVector, xs::AbstractVector, method::Symbol)
+    known = findall(!isnan, ys)
+    (isempty(known) || length(known) == length(ys)) && return ys
+    for i in eachindex(ys)
+        isnan(ys[i]) || continue
+        x = xs[i]
+        if x <= xs[known[1]]
+            ys[i] = ys[known[1]]
+        elseif x >= xs[known[end]]
+            ys[i] = ys[known[end]]
+        else
+            k = searchsortedlast(xs[known], x)
+            a, b = known[k], known[k + 1]
+            ys[i] = method === :hold_backward ? ys[a] :
+                    method === :look_forward ? ys[b] :
+                    ys[a] + (ys[b] - ys[a]) * (x - xs[a]) / (xs[b] - xs[a])
+        end
+    end
+    return ys
+end
+
 function _to_float64_vec(data)
     v = vec(data isa AbstractMatrix ? data : reshape([data], 1, 1))
     return Float64[_to_float(x) for x in v]
@@ -302,7 +351,10 @@ from `y_name`.  `method` is a DATA keyword (`:interpolate`, `:hold_backward`,
 function pysd_xlsx_build_lookup_dispatch(path::String, sheet::String,
                                          x_name::String, y_name::String;
                                          n::Int=1, method::Symbol=:interpolate)
-    itp(ys, xs) = pysd_build_tab_itp(ys, xs, method)
+    function itp(ys, xs)
+        xs_c, ys_c = _clean_series(xs, ys, method)
+        return pysd_build_tab_itp(ys_c, xs_c, method)
+    end
     if _is_row_or_col(path, x_name, y_name)
         xs, ys = _read_row_or_col(path, sheet, x_name, y_name, n)
         return [itp(ys[k, :], xs) for k in 1:n]
@@ -332,7 +384,7 @@ function pysd_xlsx_read_series(path::String, sheet::String,
                                x_row_or_col::String, y_cell::String)
     if _is_row_or_col(path, x_row_or_col, y_cell)
         xs, ys = _read_row_or_col(path, sheet, x_row_or_col, y_cell, 1)
-        return xs, vec(ys)
+        return _clean_series(xs, vec(ys))
     end
     xs = _to_float64_vec(_read_range(path, sheet, x_row_or_col))
     y_data = _read_range(path, sheet, y_cell)
@@ -345,5 +397,5 @@ function pysd_xlsx_read_series(path::String, sheet::String,
     else
         ys = _to_float64_vec(y_data)
     end
-    return xs, ys
+    return length(ys) == n ? _clean_series(xs, ys) : (xs, ys)
 end
