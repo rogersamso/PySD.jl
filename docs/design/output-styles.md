@@ -14,7 +14,8 @@ use:
 | **DSL** | Our own modelling language: plain Julia and mathematical notation, built from reusable components | Writing new models from scratch; translator output that a mathematician can read and edit |
 
 The idea is that a model written in the DSL can later **generate** both the
-ODE and the MTK forms, so the Python translator only has to produce DSL text.
+ODE and the MTK forms, so the Python translator only has to produce DSL text,
+and that a visual editor can build and edit the same models (section 5).
 
 Every ODE and MTK example below was run and compared with Vensim's output for
 the same test model (see [Measurements](#measurements)).
@@ -698,6 +699,93 @@ already) and biflows (any flow in the DSL can be negative).
 
 ---
 
+## 5. A model editor (UI)
+
+The DSL should be the base for a **visual editor**: a web interface to build a
+model from scratch or edit an existing one, as a stock-and-flow diagram next to
+its equations, with results that update as values change. The editor doesn't
+need to exist soon, but it shapes the design now.
+
+### One model, several views
+
+The DSL text, the diagram and the generated ODE and MTK code are all views of
+**one model description**: a small data structure (the "model graph") with,
+for each variable, its name, kind (stock, flow, auxiliary, parameter, lookup,
+data), equation, dimensions, unit and description, and for each component its
+inputs, outputs and contents.
+
+```
+            ┌──────────── edit ────────────┐
+DSL text ⇄ model graph ⇄ editor (diagram, equation panels, tables)
+                │
+                ├─→ ODE style (generated)
+                ├─→ MTK style (generated)
+                └─→ results, LaTeX, documentation
+```
+
+- The `@model` macro, the editor and the translator all read and write the same
+  model graph, so a model made in the editor is an ordinary DSL file, and a DSL
+  file opens in the editor.
+- **Round trip without loss.** DSL → model graph → DSL gives the same text,
+  docstrings and comments included. The DSL is written back by a formatter with
+  one fixed layout, so an edit in the editor changes only the lines it touches,
+  and files stay readable and `git diff`-able.
+- **ODE and MTK code are generated, not edited.** The editor can show them, but
+  changes are made in the model and the code is regenerated. Reading arbitrary
+  hand-edited Julia back into a model graph is not proposed.
+
+### What this asks of the DSL
+
+- **Every construct maps to the model graph.** The `@model` block contains only
+  DSL constructs (equations, `@dims`, `@param`, `@input`/`@output`, components).
+  General Julia functions go in normal Julia code next to the model and are called
+  from it. The editor shows them as functions, with their signature, and does not
+  edit them.
+- **Equations in any order** (already a rule), so the editor can add a variable
+  anywhere.
+- **Names are identities.** A variable's name identifies it everywhere (diagram,
+  results, scenarios). Renaming is one operation that updates every reference.
+- **Kinds are visible in the syntax.** `∂t(x)` is a stock, `@param` a parameter,
+  `piecewise_linear` a lookup, `data(…)` data. The editor can draw them without
+  guessing, and flows are the terms of a `∂t` equation (`+` in, `−` out).
+- **Layout separate from the equations.** Diagram positions, colours and the
+  routing of arrows go in a side file per component (`stage.layout.toml`), not
+  in the model text (Vensim mixes its sketch into the `.mdl`). A model without a
+  layout file gets an automatic layout. Translated models keep their Vensim
+  sketch positions, which PySD already parses for `split_views`.
+- **Components are boxes with ports.** In the diagram a component is a box, its
+  `@input`s and `@output`s are its connection points, and opening it shows its own
+  diagram. Translated models with `split_views` open with one box per view.
+- **Arrays show their dimensions.** A variable over `(sector, sector1)` shows its
+  dimensions in the diagram, and its values are edited as a labelled table
+  (DimArray), not as a flat list.
+
+### What the editor can offer
+
+- **Instant feedback while editing**: dimension checks, unit checks (if units
+  are adopted), undefined names, and algebraic loops named variable by variable
+  (`a → b → a`).
+- **Fast "what if"**: parameters live in `p`, so a slider changes a parameter
+  and re-runs the compiled ODE model in milliseconds, without compiling again.
+  Only structural changes (new variables or equations) recompile.
+- **Scenarios** edited as tables, run side by side, with one plot per variable
+  and one line per scenario.
+- **Equations as mathematics**: the model graph is turned into LaTeX
+  (Latexify.jl), and with MTK into the simplified system.
+
+### How it could be built
+
+- **Back end in Julia**: a small service around PySD.jl that loads a model
+  graph, checks it, compiles the ODE style once, runs scenarios and returns
+  results. The same functions work in the REPL.
+- **Front end in the browser**: a diagram editor and equation panels that talk to
+  the back end through a plain JSON format of the model graph. That format is
+  also an open format for other tools.
+- First steps that are useful without a UI: the model graph type, the
+  DSL ⇄ graph round trip with the formatter, and `@model` built on top of them.
+
+---
+
 ## Measurements
 
 All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
@@ -733,6 +821,7 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 3. **Results** keep Vensim's variable names and labelled dimensions (as `save_results` does since PySD.jl 0.2.0).
 4. **The DSL** is the long-term target: plain Julia and mathematical notation (no Vensim syntax), readable names, arrays with named dimensions (DimensionalData.jl, as xarray in Python PySD), and models built from components with declared inputs and outputs. It is built in PySD.jl as a macro that generates the ODE and MTK forms. The translator then emits DSL text, with components following `split_views` (one per view) and one per Vensim macro.
 5. **DynamicalSystems.jl** integration (`CoupledODEs`) replaces building our own step-by-step, parameter-change and state-saving features. It is an **optional dependency**: a package extension (`[weakdeps]` + `[extensions]` in PySD.jl's `Project.toml`), like the existing ModelingToolkit extension. `using PySD, DynamicalSystemsBase` adds e.g. `CoupledODEs(model)`; without it, DynamicalSystems is not installed or loaded.
+6. **A model graph** (one data structure per model, with a JSON form) is the single description that the DSL, the translator and a future visual editor read and write; ODE and MTK code are generated from it, never edited by hand. Diagram layout goes in a side file per component.
 
 ## Open questions
 
@@ -741,15 +830,18 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 - **Component connections:** as keyword arguments (`stage(incoming_orders = …)`, as proposed), or separate `connect(a.output, b.input)` lines as in ModelingToolkit?
 - **MTK:** keep generating it from the translator, or only from the DSL?
 - **Units:** checked (e.g. with Unitful.jl) or documentation only?
+- **Editor front end:** a web app talking to a Julia back end through the JSON model graph (as proposed), or an editor written in Julia (e.g. Bonito.jl with WGLMakie)?
+- **Layout files:** TOML per component (as proposed), or one file per model?
 - **Scenarios:** in Julia only (`@scenarios`), or also in a file (TOML) that can be edited without touching the model?
 
 ## Plan
 
 1. Agree on this proposal (or change it).
 2. ODE style in the translator, step by step, guarded by the reference tests.
-3. DSL macro in PySD.jl for a first set of constructs (stocks, auxiliaries, arrays, sums, `smooth`/`delay`, components), generating the ODE style.
+3. Model graph type, DSL ⇄ graph round trip with a formatter, and the DSL macro in PySD.jl on top of it, for a first set of constructs (stocks, auxiliaries, arrays, sums, `smooth`/`delay`, components), generating the ODE style.
 4. Translator emits the DSL; MTK generated from the DSL.
 5. DynamicalSystems.jl integration as a package extension (optional dependency), and documentation.
+6. Visual editor on top of the model graph: first a viewer (diagram, equations, results), then editing.
 
 ## Related work
 - [Vensim](https://vensim.com/) `.mdl`: equations, subscripts and function library.
