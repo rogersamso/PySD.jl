@@ -457,6 +457,25 @@ dimensions in the other order):
 | [AxisKeys.jl](https://github.com/mcabbott/AxisKeys.jl) 0.2.17 | yes (NamedDims) | yes | only in the same order: `x[a] .* m[b, a]` fails | `sum(x; dims = :a)` | light |
 | [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl) 0.30.2 | yes | yes (lookups, selectors) | yes, in any order (`broadcast_dims`) | `sum(x; dims = Sector)` | closest to xarray; datasets (`DimStack`), NetCDF through Rasters.jl / YAXArrays.jl |
 
+Maintenance and use (GitHub and the General registry, 22 October 2026; downloads
+from the Julia package server logs, September 2021 to February 2026, the latest
+published):
+
+| | NamedArrays.jl | AxisKeys.jl | DimensionalData.jl |
+|---|---|---|---|
+| Latest release | 0.10.5 (Sep 2025) | 0.2.17 (Aug 2025) | 0.30.2 (Aug 2026) |
+| Commits in the last 12 months | 0 | 8 | 55 |
+| Contributors | 22 | 23 | 50 |
+| GitHub stars | 128 | 154 | 335 |
+| Registered packages that depend on it (+ optional) | 42 | 29 (+11) | 78 (+26) |
+| Downloads by users (unique addresses) | 29,500 | 6,100 | 7,300 |
+
+NamedArrays has the most downloads, mostly as an older dependency of other
+packages, but no commits in the last year. DimensionalData is the most actively
+developed, has the most contributors and the most packages built on it
+(Rasters.jl, YAXArrays.jl and others in the geoscience and climate ecosystem,
+which reads and writes NetCDF as PySD does).
+
 **Proposed: DimensionalData.jl.** Tested on `subscript_transposition`
 (Julia 1.12, DimensionalData 0.30.2):
 - `sum(broadcast_dims(*, input, io_matrix); dims = Sector)` gives `output`
