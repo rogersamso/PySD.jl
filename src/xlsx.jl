@@ -177,6 +177,8 @@ function _to_float(x)
     x === nothing && return NaN
     ismissing(x) && return NaN
     x isa Number && return Float64(x)
+    # numbers stored as text, as Python PySD reads them
+    x isa AbstractString && return something(tryparse(Float64, strip(x)), NaN)
     return NaN
 end
 
@@ -359,13 +361,17 @@ function pysd_xlsx_build_lookup_dispatch(path::String, sheet::String,
         xs, ys = _read_row_or_col(path, sheet, x_name, y_name, n)
         return [itp(ys[k, :], xs) for k in 1:n]
     end
-    xs = _to_float64_vec(_read_range(path, sheet, x_name))
+    x_data = _read_range(path, sheet, x_name)
+    xs = _to_float64_vec(x_data)
     y_data = _read_range(path, sheet, y_name)
     nr, nc = size(y_data)
-    if nr == length(xs) && nc > 1
-        return [itp(Float64[_to_float(y_data[i, j]) for i in 1:nr], xs) for j in 1:nc]
-    elseif nc == length(xs) && nr > 1
+    # As Python PySD, the series run along the x range: x in a row gives one
+    # series per row of y (this also decides square blocks)
+    x_in_row = size(x_data, 1) == 1 && size(x_data, 2) > 1
+    if nc == length(xs) && nr > 1 && (x_in_row || nr != length(xs))
         return [itp(Float64[_to_float(y_data[i, j]) for j in 1:nc], xs) for i in 1:nr]
+    elseif nr == length(xs) && nc > 1
+        return [itp(Float64[_to_float(y_data[i, j]) for i in 1:nr], xs) for j in 1:nc]
     end
     return [itp(_to_float64_vec(y_data), xs)]
 end

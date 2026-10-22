@@ -55,6 +55,8 @@ end
     @test isequal(PySD.Symbolics.substitute(pysd_zidz(6.0, y_zidz), Dict(y_zidz => 0.0)), 0.0)
     @test isequal(PySD.Symbolics.substitute(pysd_xidz(6.0, y_zidz, 5.0), Dict(y_zidz => 0.0)), 5.0)
     @test isequal(PySD.Symbolics.substitute(pysd_xidz(6.0, y_zidz, 5.0), Dict(y_zidz => 3.0)), 2.0)
+    @test PySD._to_float(" 0.1 ") == 0.1
+    @test isnan(PySD._to_float("Years"))
     @test pysd_trunc(2.7) == 2.0
     @test pysd_trunc(-2.7) == -2.0
     @test pysd_log_base(8.0, 2.0) ≈ 3.0
@@ -287,6 +289,10 @@ end
     @test fns[1](1.5) ≈ 3.5 && fns[2](1.5) ≈ 2.5
     @test fns[1](10.0) == 1.0                           # constant extrapolation
     @test only(pysd_xlsx_build_lookup_dispatch(xl, "Data", "xs", "ys"))(0.5) ≈ 4.5
+    # square block with the times in a row: one series per row
+    sq = pysd_xlsx_build_lookup_dispatch(xl, "Data", "xs_row", "ys_square"; n=2)
+    @test sq[1](0.5) ≈ 1.5 && sq[2](0.5) ≈ 15.0
+    @test pysd_xlsx_read_constant(xl, "Data", "text_param") == 0.1
 end
 
 if HAS_TEST_MODELS
