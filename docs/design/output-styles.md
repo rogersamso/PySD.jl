@@ -11,7 +11,7 @@ use:
 |---|---|---|
 | **ODE** | Plain Julia, cleaner: named state, constants written once, array operations | Everyday runs, large models, editing a translated model |
 | **MTK** | ModelingToolkit, symbolic equations | Symbolic analysis, model transformations, LaTeX |
-| **DSL** | Our own modelling language: Vensim's good parts, mathematical notation | Writing new models from scratch; translator output that reads like the source |
+| **DSL** | Our own modelling language: plain Julia and mathematical notation, built from reusable components | Writing new models from scratch; translator output that a mathematician can read and edit |
 
 The idea is that a model written in the DSL can later **generate** both the
 ODE and the MTK forms, so the Python translator only has to produce DSL text.
@@ -257,108 +257,291 @@ analysis and transformations better than everyday runs.
 
 ## 4. Style 3: our DSL
 
-Goals: **concise**, **close to the mathematics**, **easy to start a model from a
-blank page**, and taking only the good parts of Vensim's `.mdl` (one equation
-per variable, subscripts, the function library), not its separators, sketch
-section or `:EXCEPT:` syntax.
+A model in the DSL should read **as if a Julia developer who is also a
+mathematician had written it**: the equations as they would appear in a paper,
+in ordinary Julia. At the same time it must be **easy to read and edit** by
+someone who opens the file for the first time, and **very modular**: a model
+is built from small, self-contained components that can be reused, swapped and
+run on their own.
+
+Vensim's notation was designed for people who prefer not to write mathematics
+(`INTEG`, `STEP`, `SMOOTH3I`, `:EXCEPT:`, `|` separators), and a Vensim model is
+one flat list of equations. The DSL does not copy either. Instead, the translator
+turns Vensim and XMILE models into the DSL (see
+[From Vensim to the DSL](#from-vensim-to-the-dsl)).
 
 Rules:
-- It is **valid Julia syntax** (checked with Julia's parser), read by a `@model` macro.
-- **Time is implicit**: `STEP(5, 5)`, as in Vensim.
-- **Subscripts are index sets** with labels: `@index i ∈ entries = (entry_1, entry_2, entry_3)`.
-- **Stocks** are written as differential equations, `∂t(stock[i, j]) = …`, or Vensim-style with `INTEG(…)`.
-- **Stateful functions create their stocks automatically**, and related Vensim functions merge into one with options.
-- **Descriptions and units** go in a docstring above the equation.
+- **Plain Julia.** Every model is valid Julia syntax (checked with Julia's
+  parser), read by a `@model` macro. Functions are Julia's own (`exp`, `log`,
+  `min`, `clamp`, `sum`, `ifelse`, `x > 0 ? a : b`) or short lowercase helpers
+  from PySD.jl, never Vensim's capitalised names.
+- **Time is the variable `t`**, written where it is used, as in mathematics:
+  `5 * (t ≥ 5)` rather than `STEP(5, 5)`. `@time t ∈ 0:0.25:20` declares it
+  as a Julia range (initial time : time step : final time).
+- **Stocks are differential equations**: `∂t(x) = inflow - outflow` with the
+  initial value as `x(0) = x₀`. There is no `INTEG`.
+- **Arrays are arrays.** Dimensions are declared once, equations over whole
+  arrays use Julia's broadcasting (`.+`, `.*`) or linear algebra (`A' * x`), and
+  index notation (`x[i, j]`, `∑`) is there when it is clearer. Parts of an array
+  are slices or named subsets, not `:EXCEPT:`.
+- **Functions are functions.** A lookup is a piecewise-linear function `f`, used
+  as `f(x)`. A fixed delay is the delayed value `x(t - τ)`.
+- **Stateful operators** (smoothing, delays of material, trends) are functions
+  with keyword options. The macro creates their hidden stocks. Writing the ODE out
+  by hand (`∂t(y) = (x - y) / τ`) is always possible as well.
+- **Readable first.** Variables have descriptive names (`temperature`,
+  `room_temperature`); Greek letters only where a reader expects them (`τ` for a
+  time constant). One equation per line, in the order a reader would explain the
+  model, and a docstring above it with the description and the unit. The macro
+  sorts the equations itself, so they can be moved freely.
+- **Modular.** Every part of a model is a component with declared inputs and
+  outputs (see [Components](#components)). Components are written once, used
+  many times, kept one per file, and each one runs and is tested on its own.
 
-These are syntax sketches (the macro doesn't exist yet), but all three parse as valid Julia.
+These are syntax sketches (the macro doesn't exist yet), but every block below
+parses as valid Julia.
+
+### `teacup`
+
+```julia
+@model teacup begin
+    @time t ∈ 0:0.125:30                           # minutes
+
+    "Room temperature [°F]"
+    room_temperature = 70
+
+    "Characteristic time [min]"
+    τ = 10
+
+    "Teacup temperature [°F]: Newton's law of cooling"
+    ∂t(temperature) = -heat_loss
+    temperature(0) = 180
+
+    "Heat loss to room [°F/min]"
+    heat_loss = (temperature - room_temperature) / τ
+end
+```
 
 ### `subscript_2d_arrays`
 
 ```julia
 @model subscript_2d_arrays begin
-    @time 0:1:100                                  # initial time : time step : final time
+    @time t ∈ 0:1:100
 
-    @index i ∈ entries = (entry_1, entry_2, entry_3)
-    @index j ∈ columns = (column_1, column_2)
+    @dims entries = (entry_1, entry_2, entry_3)
+    @dims columns = (column_1, column_2)
 
     "Rate A [1/month]"
-    rate_a[i, j] = [0.01 0.02; 0.03 0.04; 0.05 0.06]
+    rate_a::Matrix{entries, columns} = [0.01 0.02; 0.03 0.04; 0.05 0.06]
 
-    initial_values[i, j] = [1 2; 3 4; 5 6]
-
-    "Stock A [units]"
-    ∂t(stock_a[i, j]) = inflow_a[i, j]
-    stock_a(0) = initial_values
-
-    inflow_a[i, j] = rate_a[i, j]
+    "Stock A [units]: each element grows linearly"
+    ∂t(stock_a) = rate_a
+    stock_a(0) = [1 2; 3 4; 5 6]
 end
-
-# Vensim-style alternative, also accepted:
-#     stock_a[i, j] = INTEG(inflow_a[i, j], initial_values[i, j])
 ```
 
-### `subscript_transposition`
+The dimensions come from the declared shapes, so `∂t(stock_a) = rate_a` is a
+3 × 2 array equation, with no loop and no index.
+
+### `subscript_transposition` (sums over a dimension)
 
 ```julia
 @model subscript_transposition begin
-    @time 0:1:1
+    @time t ∈ 0:1:1
 
-    @index s ∈ sectors = (agriculture, industry, transport, tourism, comercial)
-    @index r ∈ sectors                             # a second index over the same set
+    @dims sectors = (agriculture, industry, transport, tourism, comercial)
 
-    input[s] = [1, 10, 5, 7, 9]
-    io_matrix[s, r] = [ 1  2  3  4  5;
-                       10 20 30 40 50;
-                        1  2  3  4  5;
-                        2  3  4  5  6;
-                       -1  2 -3  4 -5]
+    input::Vector{sectors} = [1, 10, 5, 7, 9]
+    io_matrix::Matrix{sectors, sectors} = [ 1  2  3  4  5;
+                                           10 20 30 40 50;
+                                            1  2  3  4  5;
+                                            2  3  4  5  6;
+                                           -1  2 -3  4 -5]
 
-    output[r] = ∑(input[s] * io_matrix[s, r] for s ∈ sectors)
-    output2[r] = ∑(input[s] * io_matrix[r, s] for s ∈ sectors)
+    output = io_matrix' * input                    # output[j] = ∑ᵢ input[i] io_matrix[i, j]
+    output2 = io_matrix * input                    # output2[j] = ∑ᵢ io_matrix[j, i] input[i]
 
-    # or, as linear algebra:
-    #   output = io_matrix' * input
-    #   output2 = io_matrix * input
+    # or with indices, when the sum is not a matrix product:
+    #   output[j] = ∑(input[i] * io_matrix[i, j] for i ∈ sectors)
 end
 ```
 
-### `smooth`
+### `smooth` (stateful operators)
 
-One `SMOOTH` with options replaces SMOOTH, SMOOTHI, SMOOTH3, SMOOTH3I and SMOOTH N;
-the macro creates the hidden stage stocks.
+One `smooth` with options replaces SMOOTH, SMOOTHI, SMOOTH3, SMOOTH3I and SMOOTH N.
+The macro creates the hidden stage stocks.
 
 ```julia
 @model smooth begin
-    @time 0:0.25:20
+    @time t ∈ 0:0.25:20
 
     initial_value = 5
-    input = -1 + STEP(5, 5)
-    adjustment_time = 2 + STEP(2, 10)
-    variable_order = 2 + STEP(1, 10)
+    input = -1 + 5 * (t ≥ 5)                       # a step of 5 at t = 5
+    τ = 2 + 2 * (t ≥ 10)                           # adjustment time
+    order = 2 + (t ≥ 10)                           # read at t = 0
 
-    smooth_output = SMOOTH(input, adjustment_time)
-    smoothi_output = SMOOTH(input, adjustment_time; init = initial_value)
-    smooth3_output = SMOOTH(input, adjustment_time; order = 3)
-    smooth3i_output = SMOOTH(input, adjustment_time; order = 3, init = initial_value)
-    smooth_n_output = SMOOTH(input, adjustment_time; order = variable_order, init = initial_value)
+    smooth_output = smooth(input, τ)               # first-order exponential smoothing
+    smoothi_output = smooth(input, τ; init = initial_value)
+    smooth3_output = smooth(input, τ; order = 3)
+    smooth3i_output = smooth(input, τ; order = 3, init = initial_value)
+    smooth_n_output = smooth(input, τ; order, init = initial_value)
+
+    # the same as smooth_output, written as the ODE it stands for:
+    ∂t(smoothed) = (input - smoothed) / τ
+    smoothed(0) = input
 end
 ```
 
+### Delays, lookups and data
+
+```julia
+@model supply_line begin
+    @time t ∈ 0:0.25:50
+
+    "Effect of inventory on orders [dimensionless]"
+    effect = piecewise_linear(0 => 1.5, 0.5 => 1.2, 1 => 1.0, 2 => 0.6)
+
+    demand = data("inputs.xlsx", "demand")         # a time series, read at load time
+    target_inventory = 400
+    orders = demand(t) * effect(inventory / target_inventory)
+
+    received = delay(orders, 4; order = 3)         # material delay (third order)
+    reported_orders = orders(t - 2)                # fixed delay: the value 2 time units ago
+    orders_trend = trend(orders, 6)
+
+    "Inventory [units]: never negative"
+    @nonnegative ∂t(inventory) = received - shipments
+    inventory(0) = 400
+    shipments = min(demand(t), inventory / 0.25)
+end
+```
+
+### Several equations for one array
+
+Vensim defines parts of an array with separate equations and `:EXCEPT:`. In
+the DSL these are slices, or named subsets of a dimension:
+
+```julia
+@dims ages = (young, adult, old)
+
+∂t(population[young]) = births - ageing[young]
+∂t(population[adult:old]) = ageing[young:adult] .- ageing[adult:old]   # each age from the one below
+ageing = population ./ duration
+```
+
+### Components
+
+A component is a small model with **declared inputs and outputs** (its
+interface). Everything else inside it is private. It is defined once and then
+used like a function, as many times as needed. The supply-chain stage of the
+beer game, for example:
+
+```julia
+# file: components/stage.jl
+"One stage of a supply chain: keeps an inventory and orders from upstream."
+@component stage begin
+    @input incoming_orders = 4                     # default, so the stage runs alone
+    @input deliveries = 4
+    @output orders_placed
+    @output shipments
+
+    @param τ_adjust = 4                            # inventory adjustment time
+    @param target = 12
+
+    @nonnegative ∂t(inventory) = deliveries - shipments
+    inventory(0) = target
+    ∂t(backlog) = incoming_orders - shipments
+    backlog(0) = 0
+
+    shipments = min(backlog + incoming_orders, inventory)
+    expected_orders = smooth(incoming_orders, 2)
+    orders_placed = max(0, expected_orders + (target - inventory + backlog) / τ_adjust)
+end
+```
+
+A model then connects components by their inputs and outputs:
+
+```julia
+# file: beer_game.jl
+include("components/stage.jl")
+
+@model beer_game begin
+    @time t ∈ 0:1:52                               # weeks
+
+    customer_orders = 4 + 4 * (t ≥ 4)
+
+    retailer = stage(incoming_orders = customer_orders, deliveries = wholesaler.shipments)
+    wholesaler = stage(incoming_orders = retailer.orders_placed, deliveries = factory.shipments)
+    factory = stage(incoming_orders = wholesaler.orders_placed,
+                    deliveries = delay(factory.orders_placed, 2; order = 1); target = 20)
+end
+```
+
+What this gives:
+- **Reuse.** One `stage` file serves all three stages. Changing it changes them all.
+- **Parameters per instance.** `; target = 20` overrides a `@param` for one
+  instance only. Scenarios can override any `@param` in any instance
+  (`factory.target`).
+- **Qualified names.** Results keep the component path (`retailer.inventory`,
+  `factory.backlog`), so the three inventories don't clash.
+- **Runs on its own.** `run_model(stage)` uses the input defaults. Each component
+  can be tested alone before it is connected.
+- **Arrays of components.** `stages = [stage(...) for k in 1:4]`, where each
+  stage's `incoming_orders` is the previous one's `orders_placed`, for chains of
+  any length.
+- **Swappable.** A component can be replaced by any other with the same inputs
+  and outputs (e.g. a stage with a different ordering rule) without touching
+  the rest of the model.
+- **Nested.** A component can contain components, so a large model is a tree of
+  small files, each a page or less.
+
+When translating a Vensim model, each view becomes a component. Its inputs are
+the variables it uses from other views, and its outputs are the ones other views
+use from it. This replaces today's `split_views` modules, which share one flat
+namespace.
+
+### From Vensim to the DSL
+
+The translator rewrites each Vensim construct as the mathematics it stands for:
+
+| Vensim | DSL |
+|---|---|
+| `x = INTEG(f - g, x0)` | `∂t(x) = f - g`, `x(0) = x0` |
+| `STEP(h, t0)` | `h * (t ≥ t0)` |
+| `PULSE(t0, w)` | `(t0 ≤ t < t0 + w)` |
+| `RAMP(s, t0, t1)` | `s * clamp(t - t0, 0, t1 - t0)` |
+| `IF THEN ELSE(c, a, b)` | `ifelse(c, a, b)` |
+| `XIDZ(a, b, x)`, `ZIDZ(a, b)` | `b == 0 ? x : a / b`, `b == 0 ? 0 : a / b` |
+| `MIN`, `MAX`, `ABS`, `EXP`, `LN`, `SQRT`, `INTEGER` | `min`, `max`, `abs`, `exp`, `log`, `sqrt`, `trunc` |
+| `SUM(x[i!])`, `VMAX(x[i!])` | `sum(x)`, `maximum(x)` (or `∑(… for i ∈ dim)`) |
+| `SUM(a[i!] * m[i!, j])` | `m' * a` |
+| `lookup(x)` with inline points | `f = piecewise_linear(x₁ => y₁, …)`, `f(x)` |
+| `SMOOTH`, `SMOOTHI`, `SMOOTH3`, `SMOOTH3I`, `SMOOTH N` | `smooth(x, τ; order, init)` |
+| `DELAY1`, `DELAY3`, `DELAY N` | `delay(x, τ; order, init)` |
+| `DELAY FIXED(x, τ, x0)` | `x(t - τ)` (with `x0` before `t0 + τ`) |
+| `TREND(x, τ, g0)` | `trend(x, τ; init = g0)` |
+| `GET XLS DATA`, `GET DIRECT LOOKUPS` | `data(file, name)`, used as `d(t)` / `f(x)` |
+| `x[a] = …; x[b] = …` | slices `x[a]`, `x[b:c]`, or named subsets |
+| `:EXCEPT:` | a slice or subset of the remaining elements |
+| `TIME`, `TIME STEP`, `INITIAL TIME`, `FINAL TIME` | `t`, `Δt`, `first(t)`, `last(t)` from `@time` |
+| Vensim macros | components |
+| Views | components, connected by the variables they share |
+
+Where Vensim's semantics differ from the plain mathematics, the helper keeps
+Vensim's behaviour, so translated models still match the reference outputs. For
+example, `x(t - τ)` fixes the number of stages from τ at the initial time, as
+DELAY FIXED does, and comparisons with `t` use Vensim's tolerance of half a time
+step.
+
 ### Further ideas for the DSL
-- **Equations per group of elements** (Vensim's per-element definitions and
-  subranges, without `:EXCEPT:`), e.g. one equation for the youngest age group
-  and another for the rest:
-  ```julia
-  @index a ∈ ages = (young, adult, old)
-  @subset middle = (adult,)
-  ∂t(population[young]) = births - ageing[young]
-  ∂t(population[a ∈ middle]) = ageing[a-1] - ageing[a]
-  ```
 - **Flows between stocks** as an optional notation, as in
   [StockFlow.jl](https://github.com/AlgebraicJulia/StockFlow.jl):
   `susceptible => infection(rate) => infected`, with `☁` for sources and sinks.
-- **Data by name** from Excel/CSV, read when the model runs, with scenarios kept separate from the equations.
-- **Modules** that can run on their own or linked.
+- **Units** with [Unitful.jl](https://github.com/PainterQubits/Unitful.jl)
+  (`τ = 10u"minute"`), checked when the model is built, instead of units in
+  comments.
+- **Data by name** from Excel/CSV, read when the model runs, with scenarios kept
+  separate from the equations.
 
 ### Ideas from BPTK-Py
 
@@ -406,17 +589,15 @@ a few stock types Vensim doesn't have. These parts are worth taking:
   separate inflow and outflow lists. In the DSL, a `∂t` equation already shows
   which flows go in (+) and which go out (−), so one line can ask for it:
   ```julia
-  @nonnegative inventory
-  ∂t(inventory) = production - shipments - losses
+  @nonnegative ∂t(inventory) = production - shipments - losses
   ```
-  PySD's XMILE translator already reads this flag and the Python builder uses it;
-  the Julia builder ignores it today, which is why the `non_negative_*` test models
-  fail there (SDXorg/pysd#499).
+  PySD's XMILE translator already reads this flag. The Python builder uses it, and
+  the Julia builder does too since SDXorg/pysd#512.
 - **Conveyors** (XMILE): a stock where material leaves after a transit time,
   with optional leakage on the way. Like `SMOOTH`, it fits as one stateful
   function whose stage stocks the macro creates:
   ```julia
-  arrivals = CONVEYOR(shipments, transit_time; leakage = 0.02)
+  arrivals = conveyor(shipments, transit_time; leakage = 0.02)
   ```
 - **A builder API next to the macro.** BPTK models are built with plain calls
   (`model.stock("customers")`, then `customers.equation = …`). A Julia
@@ -428,8 +609,9 @@ a few stock types Vensim doesn't have. These parts are worth taking:
   acquisition = aux!(m, :customer_acquisition, :(min(potential_customers, ads + word_of_mouth)))
   ```
 - **Modules with qualified names.** Parts of a model are written once and used
-  several times; their variables appear in the results with the module name in
-  front (`retailer.inventory`, `wholesaler.inventory`), as in BPTK's beer game.
+  several times, and their variables appear in the results with the module name
+  in front (`retailer.inventory`, `wholesaler.inventory`), as in BPTK's beer
+  game. The DSL's [components](#components) do this.
 - **Error messages that name the loop.** When auxiliaries form an algebraic
   loop, BPTK names it (`a → b → a`) instead of only saying there is one. The
   macro can do the same when it sorts the equations.
@@ -472,14 +654,16 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 1. **Three styles**, chosen with `translate_to_julia(model; style = "ode" | "mtk" | "dsl")`, all checked against the reference outputs by the same test matrix (`tests/pytest_builders/pytest_julia_reference.py` in PySD).
 2. **ODE style:** named state (ComponentArrays), parameters in `p` (`Params`), a single `model!(d, s, p, t)`, constants written once, array operations where dimensions line up and comprehensions where they don't, stateful functions as stage-stock helpers in PySD.jl.
 3. **Results** keep Vensim's variable names and labelled dimensions (as `save_results` does since PySD.jl 0.2.0).
-4. **The DSL** is the long-term target. It is built in PySD.jl as a macro that generates the ODE and MTK forms. The translator then emits DSL text.
+4. **The DSL** is the long-term target: plain Julia and mathematical notation (no Vensim syntax), readable names, and models built from components with declared inputs and outputs. It is built in PySD.jl as a macro that generates the ODE and MTK forms. The translator then emits DSL text, with one component per Vensim view and macro.
 5. **DynamicalSystems.jl** integration (`CoupledODEs`) replaces building our own step-by-step, parameter-change and state-saving features. It is an **optional dependency**: a package extension (`[weakdeps]` + `[extensions]` in PySD.jl's `Project.toml`), like the existing ModelingToolkit extension. `using PySD, DynamicalSystemsBase` adds e.g. `CoupledODEs(model)`; without it, DynamicalSystems is not installed or loaded.
 
 ## Open questions
 
-- **Names of helpers in models:** keep the `pysd_` prefix (`pysd_step`), or use Vensim names (`STEP`, `SMOOTH`)? The DSL uses Vensim names; plain-Julia models could too (in a module, to avoid clashes such as `Base.step`).
+- **Names of helpers in the ODE style:** keep the `pysd_` prefix (`pysd_step`), or use the DSL's lowercase names (`smooth`, `delay`, in a module to avoid clashes)? The DSL itself uses Julia and mathematical notation (`5 * (t ≥ 5)`, `smooth(x, τ)`).
 - **Names of variables:** snake_case (as now) or the original Vensim names via `var"Stock A"`? Snake_case with the Vensim name kept as a label for results is proposed.
-- **DSL index syntax:** declared index letters (`@index i ∈ entries`), or named dimensions only (`stock[entries, columns]`, as Vensim)?
+- **DSL arrays:** declared shapes (`rate::Matrix{entries, columns}`) with whole-array equations, as proposed, or should every array equation also allow index letters (`rate[i, j]`)?
+- **Component connections:** as keyword arguments (`stage(incoming_orders = …)`, as proposed), or separate `connect(a.output, b.input)` lines as in ModelingToolkit?
+- **Translated components:** how small should the translator cut a model? One component per view, as proposed, or also per sector or per subscript range?
 - **MTK:** keep generating it from the translator, or only from the DSL?
 - **Units:** checked (e.g. with Unitful.jl) or documentation only?
 - **Scenarios:** in Julia only (`@scenarios`), or also in a file (TOML) that can be edited without touching the model?
@@ -488,7 +672,7 @@ All in `prototype/`; Julia 1.12.6 on a 2-core laptop (Intel i3-7100U).
 
 1. Agree on this proposal (or change it).
 2. ODE style in the translator, step by step, guarded by the reference tests.
-3. DSL macro in PySD.jl for a first set of constructs (stocks, auxiliaries, subscripts, SUM, SMOOTH/DELAY), generating the ODE style.
+3. DSL macro in PySD.jl for a first set of constructs (stocks, auxiliaries, arrays, sums, `smooth`/`delay`, components), generating the ODE style.
 4. Translator emits the DSL; MTK generated from the DSL.
 5. DynamicalSystems.jl integration as a package extension (optional dependency), and documentation.
 
