@@ -9,7 +9,15 @@
 pysd_trunc(x::Real) = Base.trunc(x)
 @register_symbolic pysd_trunc(x::Real)
 
-pysd_log_base(x, base) = log(base, x)
+# Logarithms, square roots and inverse trigonometric functions give NaN out of
+# their domain (log(-1), sqrt(-1), asin(2)), as numpy in Python PySD, instead
+# of an error.  IF THEN ELSE computes both branches, so the branch that is not
+# taken may be out of the domain.  NaNMath's functions are symbolic for MTK.
+pysd_ln(x) = NaNMath.log(x)
+pysd_sqrt(x) = NaNMath.sqrt(x)
+pysd_asin(x) = NaNMath.asin(x)
+pysd_acos(x) = NaNMath.acos(x)
+pysd_log_base(x, base) = NaNMath.log(x) / NaNMath.log(base)
 
 # What Vensim considers zero.  Times accumulated by fixed Euler steps carry
 # rounding errors, so pulses start up to SMALL_VENSIM early (as in Python PySD).

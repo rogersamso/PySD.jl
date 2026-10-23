@@ -124,12 +124,18 @@ function _xlsx_resolve_range(xf::XLSX.XLSXFile, sheet::String, name::String)
             break
         end
     end
+    # A name local to several sheets (a scenario sheet and its copy): the one
+    # of the requested sheet.  XLSX.jl keys local names by the sheet's id
+    # (sheetId), which is not its position once sheets are added and moved,
+    # so the sheet is recognised by the name's reference, then by its id.
+    sheet_id = sheet_idx === nothing ? nothing : wb.sheets[sheet_idx].sheetId
     fallback = nothing
     for ((idx, n), dn) in wb.worksheet_names
         if n == name
             ref = string(dn.value)
             occursin('!', ref) || (ref = sheet * "!" * ref)
-            if sheet_idx !== nothing && idx == sheet_idx
+            ref_sheet = lowercase(strip(String(split(ref, '!')[1]), ['\'', '=']))
+            if ref_sheet == sheet_lower || (sheet_id !== nothing && idx == sheet_id)
                 return ref
             end
             fallback === nothing && (fallback = ref)

@@ -407,4 +407,22 @@ end
 
 include("test_params.jl")
 
+@testset "out of the domain: NaN, as numpy" begin
+    @test pysd_ln(1.0) == 0.0 && isnan(pysd_ln(-1.0))
+    @test pysd_sqrt(4.0) == 2.0 && isnan(pysd_sqrt(-4.0))
+    @test pysd_asin(1.0) ≈ pi / 2 && isnan(pysd_asin(2.0))
+    @test pysd_acos(1.0) == 0.0 && isnan(pysd_acos(-2.0))
+    @test pysd_log_base(100.0, 10.0) ≈ 2.0 && isnan(pysd_log_base(-100.0, 10.0))
+    # the branch IF THEN ELSE does not take may be out of the domain
+    x = -27.9
+    @test pysd_ifelse(x < 0.1, 0.0, 0.434294 * pysd_ln(x) + 1.0) == 0.0
+end
+
+@testset "named ranges local to several sheets" begin
+    xl = joinpath(DATA, "local_names.xlsx")
+    # each sheet's own definition, whatever the sheets' ids
+    @test pysd_xlsx_read_constant(xl, "NZP", "p_growth") == 0.086
+    @test pysd_xlsx_read_constant(xl, "NZP_old", "p_growth") == 0.13
+end
+
 end
