@@ -1,6 +1,7 @@
 module PySD
 
 using DataInterpolations
+import NaNMath
 using FunctionWrappers: FunctionWrapper
 using NCDatasets
 using Random
@@ -38,7 +39,8 @@ function check_compat(built_with::VersionNumber)
     end
 end
 
-export pysd_trunc, pysd_log_base, pysd_xidz, pysd_zidz,
+export pysd_trunc, pysd_log_base, pysd_ln, pysd_sqrt, pysd_asin, pysd_acos,
+       pysd_xidz, pysd_zidz,
        pysd_pulse, pysd_pulse_train, pysd_ramp, pysd_step,
        pysd_active_initial, pysd_ifelse,
        pysd_inv_mat2d_elem, pysd_inv_mat3d_elem,
