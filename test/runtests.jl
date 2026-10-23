@@ -405,4 +405,6 @@ end
     end
 end
 
+include("test_params.jl")
+
 end

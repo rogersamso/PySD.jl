@@ -407,6 +407,7 @@ the Vensim interpolation `method` symbol:
 - `:look_forward`            → `ConstantInterpolation(dir=:right)` (next value)
 """
 function pysd_build_tab_itp(vals::AbstractVector, times::AbstractVector, method::Symbol)
+    times, vals = _one_point_constant(times, vals)
     if method === :hold_backward
         return ConstantInterpolation(vals, times;
             extrapolation_left=ExtrapolationType.Constant,

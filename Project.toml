@@ -5,6 +5,7 @@ version = "0.2.4"
 [deps]
 DataInterpolations = "82cc6244-b520-54b8-b5a6-8a565e85f1d0"
 DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
+FunctionWrappers = "069b7b12-0de2-55c6-9aab-29f3d0a68a2e"
 LibXLS = "221edcab-ec84-5148-84a2-7385855c517f"
 NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -20,12 +21,13 @@ PySDMTKExt = "ModelingToolkit"
 [compat]
 DataInterpolations = "6, 7, 8"
 DelimitedFiles = "1.9.1"
+FunctionWrappers = "1.1"
 LibXLS = "1.0.1"
 ModelingToolkit = "9, 10"
 NCDatasets = "0.14"
 Symbolics = "5, 6"
 Test = "1"
-XLSX = "0.10, 0.11"
+XLSX = "0.11"
 julia = "1.10"
 
 [extras]

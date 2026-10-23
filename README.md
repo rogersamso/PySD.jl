@@ -46,6 +46,26 @@ Functions for reading Vensim external data (`GET DIRECT CONSTANTS`,
 
 Excel files are cached in memory (one read per file per session).
 
+### Changing a model's inputs between runs
+
+A generated ODE model's `params(; name = value, ...)` builds its constants,
+lookups and data with the given values in place of its own (see PySD's
+documentation, "Scenarios").  It uses:
+
+- `pysd_input(given, name, default)` — the given value converted to the
+  kind the model has: a number; an array of the constant's size (or a number
+  for all of it); for a lookup or data series, anything `pysd_lookup` takes.
+- `pysd_lookup(value)` — a lookup from a function, an interpolation from
+  DataInterpolations.jl, `(x, y)` vectors (linear, held constant outside
+  `x`, as Vensim), `(x, Y)` with one column per element, or a number.
+- `PySDFunction` — the type of every lookup and data series in the
+  parameters, whatever function it holds, so replacing one does not compile
+  the model again (FunctionWrappers.jl for the usual argument types).
+- `pysd_check_inputs(given, values)` and `pysd_check_fixed(given, fixed)` —
+  errors for names that are not inputs of the model, and for constants whose
+  value the translation used (e.g. the number of stages of a DELAY FIXED).
+- `pysd_file(dir, file, files)` — an input file or its replacement.
+
 ## Running the tests
 
 The tests use the reference models of [SDXorg/test-models](https://github.com/SDXorg/test-models),
