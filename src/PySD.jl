@@ -1,6 +1,7 @@
 module PySD
 
 using DataInterpolations
+using FunctionWrappers: FunctionWrapper
 using NCDatasets
 using Random
 using Symbolics
@@ -56,6 +57,7 @@ export pysd_trunc, pysd_log_base, pysd_xidz, pysd_zidz,
        pysd_allocate_by_priority, pysd_allocate_available,
        pysd_tab_read_series, pysd_build_tab_itp,
        pysd_export_latex,
+       pysd_input, pysd_lookup, pysd_check_inputs, pysd_check_fixed, pysd_file, PySDFunction,
        save_results,
        check_compat, PYSD_JL_VERSION
 
@@ -63,5 +65,6 @@ include("helpers.jl")
 include("xlsx.jl")
 include("latex.jl")
 include("save_results.jl")
+include("params.jl")
 
 end

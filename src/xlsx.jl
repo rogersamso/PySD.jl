@@ -192,11 +192,19 @@ and missing y values are filled with `method` (`:interpolate` linearly,
 the first and last known values at the ends).  `:raw` data are not filled.
 `ys` is a vector, or a matrix with one series per row.
 """
+# A series of one point has the same value everywhere (as in Python PySD):
+# two points with that value, which every interpolation can take.
+function _one_point_constant(xs::AbstractVector, ys::AbstractVecOrMat)
+    length(xs) == 1 || return xs, ys
+    return [xs[1], xs[1] + 1.0], ys isa AbstractVector ? [ys[1], ys[1]] : hcat(ys, ys)
+end
+
 function _clean_series(xs::AbstractVector, ys::AbstractVecOrMat, method::Symbol=:interpolate)
     keep = findall(!isnan, xs)
     order = keep[sortperm(xs[keep])]
     xs_c = Float64.(xs[order])
     ys_c = ys isa AbstractVector ? Float64.(ys[order]) : Float64.(ys[:, order])
+    xs_c, ys_c = _one_point_constant(xs_c, ys_c)
     method === :raw && return xs_c, ys_c
     if ys_c isa AbstractVector
         _fill_missing!(ys_c, xs_c, method)
