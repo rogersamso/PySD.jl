@@ -1,6 +1,8 @@
 module PySD
 
 using DataInterpolations
+import Libdl
+import LinearAlgebra
 import NaNMath
 using FunctionWrappers: FunctionWrapper
 using NCDatasets
@@ -40,11 +42,12 @@ function check_compat(built_with::VersionNumber)
 end
 
 export pysd_trunc, pysd_log_base, pysd_ln, pysd_sqrt, pysd_asin, pysd_acos,
+       pysd_exp, pysd_sin, pysd_cos, pysd_tan, pysd_atan, pysd_sinh, pysd_cosh,
        pysd_xidz, pysd_zidz,
        pysd_pulse, pysd_pulse_train, pysd_ramp, pysd_step,
        pysd_active_initial, pysd_ifelse,
        pysd_inv_mat2d_elem, pysd_inv_mat3d_elem,
-       pysd_invert_matrix, pysd_elmcount,
+       pysd_invert_matrix, pysd_elmcount, pysd_sum, pysd_sum_seq,
        pysd_power, pysd_quantum, pysd_pi,
        pysd_xpulse, pysd_xpulse_train, pysd_xramp,
        pysd_random_0_1, pysd_random_uniform,
@@ -63,10 +66,13 @@ export pysd_trunc, pysd_log_base, pysd_ln, pysd_sqrt, pysd_asin, pysd_acos,
        save_results,
        check_compat, PYSD_JL_VERSION
 
+include("libm.jl")
 include("helpers.jl")
 include("xlsx.jl")
 include("latex.jl")
 include("save_results.jl")
 include("params.jl")
+
+__init__() = _load_libm()
 
 end

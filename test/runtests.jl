@@ -406,6 +406,7 @@ end
 end
 
 include("test_params.jl")
+include("test_numpy_order.jl")
 
 @testset "out of the domain: NaN, as numpy" begin
     @test pysd_ln(1.0) == 0.0 && isnan(pysd_ln(-1.0))

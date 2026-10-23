@@ -17,7 +17,20 @@ pysd_ln(x) = NaNMath.log(x)
 pysd_sqrt(x) = NaNMath.sqrt(x)
 pysd_asin(x) = NaNMath.asin(x)
 pysd_acos(x) = NaNMath.acos(x)
-pysd_log_base(x, base) = NaNMath.log(x) / NaNMath.log(base)
+pysd_log_base(x, base) = pysd_ln(x) / pysd_ln(base)
+
+# Numbers go to the C maths library, as in Python PySD (libm.jl); symbolic
+# variables (MTK) and other number types to Julia's functions.
+const _CNum = Union{Float64,Int}
+pysd_ln(x::_CNum) = _c_log(Float64(x))
+pysd_asin(x::_CNum) = _c_asin(Float64(x))
+pysd_acos(x::_CNum) = _c_acos(Float64(x))
+for (f, c) in ((:exp, :_c_exp), (:sin, :_c_sin), (:cos, :_c_cos), (:tan, :_c_tan),
+               (:atan, :_c_atan), (:sinh, :_c_sinh), (:cosh, :_c_cosh))
+    name = Symbol(:pysd_, f)
+    @eval $name(x) = $f(x)
+    @eval $name(x::_CNum) = $c(Float64(x))
+end
 
 # What Vensim considers zero.  Times accumulated by fixed Euler steps carry
 # rounding errors, so pulses start up to SMALL_VENSIM early (as in Python PySD).
@@ -63,20 +76,78 @@ pysd_active_initial(expr, initial) = expr
 pysd_ifelse(cond::Bool, a, b) = cond ? a : b
 pysd_ifelse(cond, a, b) = ifelse(cond > 0.5, a, b)
 
-# INVERT_MATRIX helpers — registered as symbolic black boxes so Symbolics
-# does not attempt symbolic matrix algebra (which hangs for large matrices).
-# At solve time the concrete array is passed and inv is computed numerically.
+# SUM as Python PySD adds: numpy's pairwise summation (eight partial sums in
+# blocks of up to 128 elements, halves above that), in the order the elements
+# come.  The last digits then match Python's, so values compared with `<` or
+# `>=` that are equal up to rounding take the same branch.  NaN counts as 0, as
+# in xarray's sum.
+_nan0(x::AbstractFloat) = isnan(x) ? zero(x) : x
+_nan0(x) = x
+
+function pysd_sum(itr)
+    Base.IteratorSize(itr) isa Base.SizeUnknown && return pysd_sum(collect(itr))
+    next = iterate(itr)
+    next === nothing && return 0.0
+    return first(_pairwise_sum(itr, next, length(itr)))
+end
+
+# the sum of the n elements from `next` on, and what comes after them
+function _pairwise_sum(itr, next, n)
+    if n < 8
+        res = -0.0
+        for _ in 1:n
+            x, state = next
+            res += _nan0(x)
+            next = iterate(itr, state)
+        end
+        return res, next
+    elseif n <= 128
+        r = ntuple(_ -> -0.0, 8)
+        blocks = n - n % 8
+        for k in 0:(blocks - 1)
+            x, state = next
+            j = k % 8 + 1
+            r = Base.setindex(r, r[j] + _nan0(x), j)
+            next = iterate(itr, state)
+        end
+        res = ((r[1] + r[2]) + (r[3] + r[4])) + ((r[5] + r[6]) + (r[7] + r[8]))
+        for _ in (blocks + 1):n
+            x, state = next
+            res += _nan0(x)
+            next = iterate(itr, state)
+        end
+        return res, next
+    end
+    half = n ÷ 2
+    half -= half % 8
+    a, next = _pairwise_sum(itr, next, half)
+    b, next = _pairwise_sum(itr, next, n - half)
+    return a + b, next
+end
+
+# SUM over a subscript that is not the last one of the array: numpy adds the
+# elements one after the other there (row by row), NaN counted as 0.
+pysd_sum_seq(itr) = isempty(itr) ? 0.0 : foldl((a, x) -> a + _nan0(x), itr; init = -0.0)
+
+# INVERT MATRIX as numpy.linalg.inv in Python PySD: LAPACK's gesv on the
+# identity (Julia's inv uses getri, which differs in the last digits).
+_numpy_inv(m::AbstractMatrix) =
+    LinearAlgebra.LAPACK.gesv!(Matrix{Float64}(m), Matrix{Float64}(LinearAlgebra.I, size(m)...))[1]
+
+# Registered as symbolic black boxes so Symbolics does not attempt symbolic
+# matrix algebra (which hangs for large matrices).  At solve time the
+# concrete array is passed and the inverse is computed numerically.
 function pysd_inv_mat2d_elem(mat::AbstractMatrix, i::Int, j::Int)
-    return inv(mat)[i, j]
+    return _numpy_inv(mat)[i, j]
 end
 @register_symbolic pysd_inv_mat2d_elem(mat::AbstractMatrix, i::Int, j::Int)
 
 function pysd_inv_mat3d_elem(mat::AbstractArray, b::Int, i::Int, j::Int)
-    return inv(mat[b, :, :])[i, j]
+    return _numpy_inv(mat[b, :, :])[i, j]
 end
 @register_symbolic pysd_inv_mat3d_elem(mat::AbstractArray, b::Int, i::Int, j::Int)
 
-pysd_invert_matrix(m::AbstractArray, n) = vec(inv(reshape(m, Int(n), Int(n))))
+pysd_invert_matrix(m::AbstractArray, n) = vec(_numpy_inv(reshape(m, Int(n), Int(n))))
 pysd_invert_matrix(m, n) = m
 
 pysd_elmcount(n) = Float64(n)
@@ -84,18 +155,23 @@ pysd_elmcount(n) = Float64(n)
 # Vensim POWER, also used for `^`: x^y.  A negative base with a non-integer
 # exponent gives NaN (as numpy.power) instead of throwing a DomainError.
 pysd_power(x, y) = x < 0 && !isinteger(y) ? NaN : float(x)^y
+pysd_power(x::_CNum, y::_CNum) = _c_pow(Float64(x), Float64(y))
 @register_symbolic pysd_power(x::Real, y::Real)
 
+# An array whose elements outside its size read as undefined: NaN, as the
+# elements a model does not define in Python PySD (0 for other types).
 struct SafeArray{T,N,A<:AbstractArray{T,N}} <: AbstractArray{T,N}
     data::A
 end
+_undefined(::Type{T}) where {T<:AbstractFloat} = T(NaN)
+_undefined(::Type{T}) where {T} = zero(T)
 Base.size(s::SafeArray) = size(s.data)
 Base.getindex(s::SafeArray{T,1}, i::Integer) where T =
-    checkbounds(Bool, s.data, i) ? s.data[i] : zero(T)
+    checkbounds(Bool, s.data, i) ? s.data[i] : _undefined(T)
 Base.getindex(s::SafeArray{T,2}, i::Integer, j::Integer) where T =
-    checkbounds(Bool, s.data, i, j) ? s.data[i, j] : zero(T)
+    checkbounds(Bool, s.data, i, j) ? s.data[i, j] : _undefined(T)
 Base.getindex(s::SafeArray{T}, idx::Integer...) where T =
-    checkbounds(Bool, s.data, idx...) ? s.data[idx...] : zero(T)
+    checkbounds(Bool, s.data, idx...) ? s.data[idx...] : _undefined(T)
 function Base.setindex!(s::SafeArray, v, idx...)
     checkbounds(Bool, s.data, idx...) && (s.data[idx...] = v)
     return v
