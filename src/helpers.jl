@@ -41,7 +41,7 @@ const SMALL_VENSIM = 1e-6
 # a symbolic variable is always false).
 pysd_xidz(x, y, z) = ifelse(abs(y) < SMALL_VENSIM, z, x / y)
 
-pysd_zidz(x, y) = ifelse(abs(y) < SMALL_VENSIM, 0.0, x / y)
+pysd_zidz(x, y) = ifelse(abs(y) < SMALL_VENSIM, zero(x / y), x / y)
 
 pysd_pulse(t_now, start, width) =
     ifelse((t_now >= start - SMALL_VENSIM) & (t_now < start + width), 1.0, 0.0)
@@ -57,7 +57,7 @@ pysd_ramp(t_now, slope, start_time, end_time=Inf) =
     slope * max(0.0, min(t_now - start_time, end_time - start_time))
 
 pysd_step(t_now, height, step_time) =
-    ifelse(t_now >= step_time, float(height), 0.0)
+    ifelse(t_now >= step_time, float(height), zero(float(height)))
 
 # Vensim logical operators — values are always 0.0 (false) or 1.0 (true).
 # Return Symbolic{Bool} via comparisons so the result can be used as the
@@ -84,17 +84,52 @@ pysd_ifelse(cond, a, b) = ifelse(cond > 0.5, a, b)
 _nan0(x::AbstractFloat) = isnan(x) ? zero(x) : x
 _nan0(x) = x
 
+# The sums start from -0.0 of the elements' type, so Float32, ForwardDiff's
+# Dual or Measurements keep their type through the sum.
+_neg_zero(x) = -zero(float(_nan0(x)))
+_zero_sum(itr) = eltype(itr) <: Number ? zero(float(eltype(itr))) : 0.0
+
 function pysd_sum(itr)
     Base.IteratorSize(itr) isa Base.SizeUnknown && return pysd_sum(collect(itr))
     next = iterate(itr)
-    next === nothing && return 0.0
-    return first(_pairwise_sum(itr, next, length(itr)))
+    next === nothing && return _zero_sum(itr)
+    return first(_pairwise_sum(itr, next, length(itr), _neg_zero(first(next))))
+end
+
+# Arrays by position: nothing to carry from one block to the next, so no
+# allocations.
+pysd_sum(a::AbstractArray) =
+    isempty(a) ? _zero_sum(a) : _pairwise_sum_at(a, firstindex(a), length(a), _neg_zero(first(a)))
+
+function _pairwise_sum_at(a, i, n, z)
+    if n < 8
+        res = z
+        for k in i:(i + n - 1)
+            res += _nan0(a[k])
+        end
+        return res
+    elseif n <= 128
+        r = ntuple(_ -> z, 8)
+        blocks = n - n % 8
+        for k in 0:(blocks - 1)
+            j = k % 8 + 1
+            r = Base.setindex(r, r[j] + _nan0(a[i + k]), j)
+        end
+        res = ((r[1] + r[2]) + (r[3] + r[4])) + ((r[5] + r[6]) + (r[7] + r[8]))
+        for k in blocks:(n - 1)
+            res += _nan0(a[i + k])
+        end
+        return res
+    end
+    half = n ÷ 2
+    half -= half % 8
+    return _pairwise_sum_at(a, i, half, z) + _pairwise_sum_at(a, i + half, n - half, z)
 end
 
 # the sum of the n elements from `next` on, and what comes after them
-function _pairwise_sum(itr, next, n)
+function _pairwise_sum(itr, next, n, z)
     if n < 8
-        res = -0.0
+        res = z
         for _ in 1:n
             x, state = next
             res += _nan0(x)
@@ -102,7 +137,7 @@ function _pairwise_sum(itr, next, n)
         end
         return res, next
     elseif n <= 128
-        r = ntuple(_ -> -0.0, 8)
+        r = ntuple(_ -> z, 8)
         blocks = n - n % 8
         for k in 0:(blocks - 1)
             x, state = next
@@ -120,14 +155,15 @@ function _pairwise_sum(itr, next, n)
     end
     half = n ÷ 2
     half -= half % 8
-    a, next = _pairwise_sum(itr, next, half)
-    b, next = _pairwise_sum(itr, next, n - half)
+    a, next = _pairwise_sum(itr, next, half, z)
+    b, next = _pairwise_sum(itr, next, n - half, z)
     return a + b, next
 end
 
 # SUM over a subscript that is not the last one of the array: numpy adds the
 # elements one after the other there (row by row), NaN counted as 0.
-pysd_sum_seq(itr) = isempty(itr) ? 0.0 : foldl((a, x) -> a + _nan0(x), itr; init = -0.0)
+pysd_sum_seq(itr) =
+    isempty(itr) ? _zero_sum(itr) : foldl((a, x) -> a + _nan0(x), itr; init = _neg_zero(first(itr)))
 
 # INVERT MATRIX as numpy.linalg.inv in Python PySD: LAPACK's gesv on the
 # identity (Julia's inv uses getri, which differs in the last digits).
@@ -154,7 +190,7 @@ pysd_elmcount(n) = Float64(n)
 
 # Vensim POWER, also used for `^`: x^y.  A negative base with a non-integer
 # exponent gives NaN (as numpy.power) instead of throwing a DomainError.
-pysd_power(x, y) = x < 0 && !isinteger(y) ? NaN : float(x)^y
+pysd_power(x, y) = x < 0 && !isinteger(y) ? oftype(float(x) * y, NaN) : float(x)^y
 pysd_power(x::_CNum, y::_CNum) = _c_pow(Float64(x), Float64(y))
 @register_symbolic pysd_power(x::Real, y::Real)
 
