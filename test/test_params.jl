@@ -6,7 +6,7 @@ using DataInterpolations: ConstantInterpolation
     @test pysd_input(given, :b, 1.0) === 1.0                  # not given: default
     v = pysd_input(given, :v, pysd_safe(zeros(3)))
     @test v isa SafeArray && collect(v) == [1.0, 2.0, 3.0]
-    @test v[5] == 0.0                                         # out of range reads 0, as the model's arrays
+    @test isnan(v[5])                                         # out of range reads NaN, as the model's arrays
     @test collect(pysd_input(given, :w, zeros(2, 2))) == fill(5.0, 2, 2)  # a number fills the array
     @test collect(pysd_input(given, :m, zeros(2, 2))) == [1.0 2.0; 3.0 4.0]
     @test_throws DimensionMismatch pysd_input(given, :v, zeros(4))
