@@ -1,5 +1,6 @@
 using PySD
 using Test
+using Aqua
 using NCDatasets
 
 const DATA = joinpath(@__DIR__, "data")
@@ -34,6 +35,11 @@ end
 Base.getindex(s::FakeSol, i::Int, ::Colon) = [u[i] for u in s.u]
 
 @testset "PySD.jl" begin
+
+# methods only on PySD's own functions or types
+@testset "no type piracy" begin
+    Aqua.test_piracies(PySD)
+end
 
 @testset "check_compat" begin
     @test PYSD_JL_VERSION isa VersionNumber
