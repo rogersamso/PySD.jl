@@ -39,7 +39,8 @@ Base.getindex(s::FakeSol, i::Int, ::Colon) = [u[i] for u in s.u]
 # no type piracy (methods only on PySD's own functions or types), no method
 # ambiguities, compat bounds for every dependency, no stale dependencies, …
 @testset "Aqua" begin
-    Aqua.test_all(PySD)
+    # the test-only packages: the CI job with the oldest versions lists them as dependencies
+    Aqua.test_all(PySD; stale_deps = (; ignore = [:Aqua, :ForwardDiff, :Measurements]))
 end
 
 @testset "check_compat" begin
