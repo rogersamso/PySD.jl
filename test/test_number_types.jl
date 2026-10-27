@@ -4,7 +4,8 @@
 using ForwardDiff: Dual, derivative, value
 using Measurements: ±, uncertainty
 
-_allocs(f, args...) = (f(args...); @allocated f(args...))
+# specialized on the arguments (Julia 1.10 otherwise allocates the tuple of them)
+_allocs(f::F, args::Vararg{Any,N}) where {F,N} = (f(args...); @allocated f(args...))
 
 @testset "type-stable for Float64, Float32 and Dual" begin
     for x in (2.0, 2.0f0, Dual(2.0, 1.0))
