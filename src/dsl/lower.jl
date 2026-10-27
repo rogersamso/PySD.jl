@@ -35,8 +35,10 @@ mutable struct Lowering
     pre::Vector{Any}                    # statements that fill buffers before the current one
     src::LineNumberNode
     opdims::Vector{Any}                 # the dimensions of each operator's value
+    numerics::Symbol                    # :julia, or :python for Python PySD's digits (numerics.jl)
 end
-Lowering(byname, env) = Lowering(byname, env, Pair{Symbol,Any}[], Any[], LineNumberNode(0), Any[])
+Lowering(byname, env; numerics = :julia) =
+    Lowering(byname, env, Pair{Symbol,Any}[], Any[], LineNumberNode(0), Any[], numerics)
 
 function _buffer!(L::Lowering, dims)
     name = Symbol("w", length(L.buffers) + 1)
@@ -223,7 +225,7 @@ function _emit(x, T, L::Lowering)
     args = x.args[2:end]
     shape = _shape(x, L)
     if f === _bc
-        return _dotcall(_emit(args[1], (), L), [_emit(a, T, L) for a in args[2:end]])
+        return _dotcall(_python(_emit(args[1], (), L), L.numerics), [_emit(a, T, L) for a in args[2:end]])
     elseif f === DimensionalData.set
         return _emit_renamed(x, T, L)
     elseif haskey(_REDUCTIONS, f) || f === previous || f === LinearAlgebra.inv ||
@@ -235,9 +237,9 @@ function _emit(x, T, L::Lowering)
         return _dotcall(_callf, [_layout(:($(v.id).series), v.dims, T, L); [_emit(a, T, L) for a in args]])
     elseif !isempty(shape) && (f in _ELEMENTWISE || f === :ifelse || f === ifelse || x.args[1] isa VarRef)
         fcode = f in _ELEMENTWISE ? f : f === ifelse ? :ifelse : _emit(x.args[1], (), L)
-        return _dotcall(fcode, [_emit(a, T, L) for a in args])
+        return _dotcall(_python(fcode, L.numerics), [_emit(a, T, L) for a in args])
     end
-    return Expr(:call, _emit(x.args[1], (), L), (_emit(a, (), L) for a in args)...)
+    return Expr(:call, _python(_emit(x.args[1], (), L), L.numerics), (_emit(a, (), L) for a in args)...)
 end
 
 function _emit_selection(x, T, L)
@@ -273,8 +275,12 @@ function _materialize(x, S, L)
         k = findfirst(e -> _dname(e) === _dname(d), Sx)
         k === nothing && error("$(_where(L.src)): no dimension `$(_dname(d))` to reduce over in $(_dimstr(Sx))")
         src = _source(args[1], Sx, L)
-        keep = Tuple(i == k ? 1 : length(_labels(e)) for (i, e) in enumerate(Sx))
-        push!(L.pre, :($(_REDUCTIONS[f])($_reshape($w, $keep), $src)))
+        if f === sum_over && L.numerics === :python
+            push!(L.pre, :($_sum_python!($w, $src, $(Val(k)))))
+        else
+            keep = Tuple(i == k ? 1 : length(_labels(e)) for (i, e) in enumerate(Sx))
+            push!(L.pre, :($(_REDUCTIONS[f])($_reshape($w, $keep), $src)))
+        end
     elseif f === previous
         Sx = _shape(args[1], L)
         d = _static_eval(args[2], L)
@@ -282,7 +288,8 @@ function _materialize(x, S, L)
         push!(L.pre, :($_previous!($w, $(_source(args[1], Sx, L)), $(Val(k)))))
     elseif f === LinearAlgebra.inv
         Sx = _shape(args[1], L)
-        push!(L.pre, :(copyto!($w, LinearAlgebra.inv(Matrix($(_source(args[1], Sx, L)))))))
+        inv_ = L.numerics === :python ? _numpy_inv : LinearAlgebra.inv
+        push!(L.pre, :(copyto!($w, $inv_(Matrix($(_source(args[1], Sx, L)))))))
     elseif f in (:+, :-) && length(args) == 2 && (_isI(args[1]) || _isI(args[2]))
         a = _isI(args[1]) ? args[2] : args[1]
         sign = f === :+ ? 1 : (_isI(args[1]) ? -1 : 1)        # I - A: -A + I;  A - I: A - I
@@ -318,7 +325,8 @@ function _reduce_scalar(x, L)
     f = _fn(x.args[1])
     haskey(_REDUCE_ALL, f) || error("$(_where(L.src)): can't compute `$x` as a number")
     Sx = _shape(x.args[2], L)
-    return :($(_REDUCE_ALL[f])($(_source(x.args[2], Sx, L))))
+    g = f === sum_over && L.numerics === :python ? pysd_sum : _REDUCE_ALL[f]
+    return :($g($(_source(x.args[2], Sx, L))))
 end
 
 function _previous!(w, x, ::Val{k}) where {k}

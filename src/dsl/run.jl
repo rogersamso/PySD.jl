@@ -28,9 +28,11 @@ Base.keys(r::Results) = [v.name for v in r.model.vars]
 
 # what the generated code reads: parameters, captured values, inputs, the
 # time, and the buffers it fills in place (one set per run)
-function _runparams(m::Model, par, inputs)
+function _runparams(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;))
+    inp = merge(m.inputs, inputs)
+    par = Base.invokelatest(m.params, inp, params, m.env, m.t0, m.dt)
     work = NamedTuple{Tuple(first.(m.buffers))}(Tuple(zeros(last(b)) for b in m.buffers))
-    return (; par, env = m.env, inputs, t0 = m.t0, dt = m.dt, work)
+    return (; par, env = m.env, inputs = inp, t0 = m.t0, dt = m.dt, work)
 end
 
 """
@@ -41,9 +43,7 @@ every `saveat`.  `params` changes parameters by name (`(; τ = 5)`), `inputs`
 input sheets (`(; scen_w = excel(…))`).
 """
 function run_model(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;))
-    inp = merge(m.inputs, inputs)
-    par = m.params(inp, params, m.env, m.t0, m.dt)
-    p = _runparams(m, par, inp)
+    p = _runparams(m; params, inputs)
     u = m.init(p)
     du = similar(u)
     nsteps = round(Int, (m.tf - m.t0) / m.dt)
@@ -59,5 +59,5 @@ function run_model(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;))
         m.rhs!(du, u, p, t)
         @. u += m.dt * du
     end
-    return Results(times, saved, par, m)
+    return Results(times, saved, p.par, m)
 end

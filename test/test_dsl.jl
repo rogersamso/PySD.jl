@@ -1,6 +1,7 @@
 # The DSL: @equations and Model, checked against Vensim's outputs
 # (SDXorg/test-models) and on the mistakes Model must catch.
 using DimensionalData: Dim, At, AbstractDimArray, DimArray, broadcast_dims
+using PySD: pysd_exp, pysd_ln, pysd_power, pysd_sin, pysd_sum, pysd_sum_seq
 using LinearAlgebra: I
 include(joinpath(@__DIR__, "dsl", "check.jl"))
 
@@ -155,15 +156,36 @@ end
     src = read(joinpath(@__DIR__, "dsl", "arrays.jl"), String)
     src = replace(src, r"\n    inverse ~ [^\n]*" => "", r"\n        inverse\(t\)[^\n]*" => "")
     m2 = Base.include_string(_module(), src)
-    p = PySD._runparams(m2, m2.params(m2.inputs, (;), m2.env, m2.t0, m2.dt), m2.inputs)
+    p = PySD._runparams(m2)
     u = m2.init(p); du = similar(u)
     allocs(f::F, du, u, p) where {F} = (f(du, u, p, 0.0); @allocated f(du, u, p, 0.0))
     @test allocs(m2.rhs!, du, u, p) == 0
     # operators of arrays: their hidden stocks element by element, nothing allocated either
     for name in ("subscripted_smooth", "subscripted_delays", "sample_if_true")
         m3 = _dsl(name)
-        p = PySD._runparams(m3, m3.params(m3.inputs, (;), m3.env, m3.t0, m3.dt), m3.inputs)
+        p = PySD._runparams(m3)
         u = m3.init(p); du = similar(u)
         @test allocs(m3.rhs!, du, u, p) == 0
     end
+end
+
+@testset "DSL: Python's digits or Julia's" begin
+    mod = _module()
+    Base.include(mod, joinpath(@__DIR__, "dsl", "numerics.jl"))
+    py = run_model(Model(mod.numerics_example; time = 0:0.5:1, time_unit = u"s", numerics = :python))
+    jl = run_model(Model(mod.numerics_example; time = 0:0.5:1, time_unit = u"s"))
+    x0 = collect(range(0.1, 3.0; length = 200))
+    x = x0 .+ 1.0                                                  # x .+ t at t = 1
+    @test parent(py[:e][end]) == pysd_exp.(x)                      # the C maths library
+    @test parent(jl[:e][end]) == exp.(x)                           # Julia's
+    @test parent(py[:e][end]) != parent(jl[:e][end])               # they differ in the last digit, sometimes
+    @test parent(py[:l][end]) == pysd_ln.(x)
+    @test parent(py[:p][end]) == pysd_power.(x, 1.7)
+    @test parent(py[:s][end]) == pysd_sin.(x0 .* 3 .+ 1)
+    # numpy's order of additions: pairwise along the last dimension, one after the other along others
+    M = [pysd_sin(a * b) for a in 1:3, b in 1:200] .* 2
+    @test parent(py[:sum_last][end]) == [pysd_sum(M[i, :]) for i in 1:3]
+    @test parent(py[:sum_first][end]) == [pysd_sum_seq(M[:, c]) for c in 1:200]
+    @test py[:total][end] == pysd_sum(x0 .* 2)
+    @test parent(py[:inverse_once]) == PySD._numpy_inv([2.0 0.3 0.1; 0.2 3.0 0.4; 0.1 0.5 4.0])
 end

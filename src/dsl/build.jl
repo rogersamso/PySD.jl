@@ -34,7 +34,9 @@ end
 Build a model from equation sets (views, components, connections): join them,
 check the declarations, units, dimensions and equations, sort the equations
 and generate the code that runs it.  `time = t₀:Δt:t_final`; `inputs` are the
-input sheets, by name.
+input sheets, by name.  `numerics = :python` keeps Python PySD's last digits
+(for translated models: the C maths library, numpy's order of additions,
+LAPACK's gesv); the default, `:julia`, uses Julia's own functions.
 """
 struct Model
     vars::Vector{Var}
@@ -61,7 +63,9 @@ Base.show(io::IO, m::Model) = print(io, "Model(", length(m.vars), " names, ",
 _flatten_sets(x::EquationSet) = [x]
 _flatten_sets(x::AbstractVector) = reduce(vcat, (_flatten_sets(y) for y in x); init = EquationSet[])
 
-function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple = (;))
+function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple = (;),
+               numerics::Symbol = :julia)
+    numerics in (:julia, :python) || throw(ArgumentError("numerics is :julia or :python, not $(repr(numerics))"))
     sets = _flatten_sets(collect(Any, sets))
     r = Resolver(sets, inputs)
     vars, byname = Var[], Dict{Symbol,Var}()
@@ -92,8 +96,10 @@ function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple
     end
     env = NamedTuple{Tuple(keys(r.env))}(Tuple(values(r.env)))
     t0, dt = Float64(first(time)), Float64(step(time))
-    params = _compile(_params_code(order, env))
-    p0 = params(inputs, (;), env, t0, dt)
+    # parameters and constants run once per run: a plain function (comprehensions
+    # in declarations need it; RuntimeGeneratedFunctions mishandles them)
+    params = Core.eval(@__MODULE__, _params_code(order, env, numerics))
+    p0 = Base.invokelatest(params, inputs, (;), env, t0, dt)
     # the stocks, then the operators' hidden stocks, in the state vector
     statevec = Dict{Symbol,UnitRange{Int}}()
     k = 0
@@ -104,7 +110,7 @@ function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple
         k += len
     end
     ops = Operator[]
-    L = Lowering(byname, env)
+    L = Lowering(byname, env; numerics)
     for call in r.operators
         op = _make_operator(call, byname, p0, env, inputs, t0, dt)
         L.src = call.source

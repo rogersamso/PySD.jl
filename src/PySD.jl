@@ -92,6 +92,7 @@ include("dsl/inputs.jl")
 include("dsl/resolve.jl")
 include("dsl/build.jl")
 include("dsl/lower.jl")
+include("dsl/numerics.jl")
 include("dsl/codegen.jl")
 include("dsl/run.jl")
 

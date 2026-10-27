@@ -16,19 +16,20 @@ function _lower_once(x, byname)
     return x
 end
 
-function _assign_once(v::Var, byname)
+function _assign_once(v::Var, byname, numerics)
+    fix(x) = numerics === :python ? _python_once(x) : x
     if length(v.parts) == 1 && isempty(v.parts[1].sels)
-        rhs = _lower_once(v.parts[1].rhs, byname)
+        rhs = fix(_lower_once(v.parts[1].rhs, byname))
         return :($(v.id) = $_with_dims($rhs, $(QuoteNode(v.dims))))
     end
     code = Any[:($(v.id) = $_blank($(QuoteNode(v.dims))))]
     for p in v.parts
-        push!(code, :($_setpart!($(v.id), $(_lower_once(p.rhs, byname)), $(QuoteNode((; p.sels...))))))
+        push!(code, :($_setpart!($(v.id), $(fix(_lower_once(p.rhs, byname))), $(QuoteNode((; p.sels...))))))
     end
     return Expr(:block, code...)
 end
 
-function _params_code(order, env)
+function _params_code(order, env, numerics)
     body = Any[:(p = (; t0, dt))]
     byname = Dict(v.name => v for v in order)
     for v in order
@@ -37,10 +38,10 @@ function _params_code(order, env)
             push!(body, :(if haskey(overrides, $key)
                               $(v.id) = $_with_dims(overrides[$key], $(QuoteNode(v.dims)))
                           else
-                              $(_assign_once(v, byname))
+                              $(_assign_once(v, byname, numerics))
                           end))
         else
-            push!(body, _assign_once(v, byname))
+            push!(body, _assign_once(v, byname, numerics))
         end
     end
     # what the code at every step reads: plain arrays in the declared order
