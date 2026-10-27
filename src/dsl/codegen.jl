@@ -78,10 +78,14 @@ function _unpack_states(vars, ops, statevec, u)
                                       :($(v.id) = reshape(view($u, $r), $(_size(v.dims)))))
     end
     for (k, o) in enumerate(ops)
-        push!(code, :($(Symbol("s", k)) = view($u, $(o.range))))
+        push!(code, :($(Symbol("s", k)) = $(_opstates(o, u))))
     end
     return code
 end
+
+# an operator's hidden stocks: a vector, or (stages × elements) for arrays
+_opstates(o::Operator, u) = isempty(o.dims) ? :(view($u, $(o.range))) :
+    :(reshape(view($u, $(o.range)), $((nstates(o.op), _size(o.dims)...))))
 
 # the target of an equation for a part: an element or a view
 function _part_target(target, v::Var, p::Part, L::Lowering)
@@ -113,12 +117,9 @@ function _assign(v::Var, parts, L::Lowering; target = v.id, fresh = true)
     return Expr(:block, code...)
 end
 
-function _opargs(o::Operator, L::Lowering)
-    map(o.call.args) do a
-        isempty(_shape(a, L)) || error("$(_where(o.call.source)): $(o.call.kind) of an array is not supported yet")
-        _emit(a, (), L)
-    end
-end
+# the arguments: numbers, or arrays laid out in the operator's dimensions
+_oparg(a, o::Operator, L::Lowering) = isempty(_shape(a, L)) ? _emit(a, (), L) : _materialize_as(a, o.dims, L)
+_opargs(o::Operator, L::Lowering) = [_oparg(a, o, L) for a in o.call.args]
 
 _needed(o::Operator) = (n = output_args(o.op); n === :all ? eachindex(o.call.args) : n)
 _needed_refs(o::Operator) = reduce(vcat, (_refs(o.call.args[i]) for i in _needed(o)); init = Symbol[])
@@ -128,7 +129,9 @@ function _opout_code(k, o::Operator, L::Lowering)
     _block!(L, o.call.source, () -> begin
         all = _opargs(o, L)
         args = [i in _needed(o) ? a : nothing for (i, a) in enumerate(all)]
-        :($(Symbol("o", k)) = $output($(QuoteNode(o.op)), $(Symbol("s", k)), $(args...)))
+        ok, OP, sk = Symbol("o", k), QuoteNode(o.op), Symbol("s", k)
+        isempty(o.dims) ? :($ok = $output($OP, $sk, $(args...))) :
+            :($ok = $_op_output!(p.work.$ok, $OP, $sk, $(args...)))
     end)
 end
 
@@ -180,8 +183,9 @@ function _rhs_code(vars, ops, statevec, L::Lowering, mode)
         end
     end
     for (k, o) in enumerate(ops)
-        push!(body, _block!(L, o.call.source, () ->
-            :($rates!(view(du, $(o.range)), $(QuoteNode(o.op)), $(Symbol("s", k)), $(_opargs(o, L)...)))))
+        push!(body, _block!(L, o.call.source, () -> isempty(o.dims) ?
+            :($rates!(view(du, $(o.range)), $(QuoteNode(o.op)), $(Symbol("s", k)), $(_opargs(o, L)...))) :
+            :($_op_rates!($(_opstates(o, :du)), $(QuoteNode(o.op)), $(Symbol("s", k)), $(_opargs(o, L)...)))))
     end
     push!(body, :(return nothing))
     return :(function (du, u, p, t)
@@ -228,11 +232,14 @@ function _init_code(vars, ops, statevec, n, L::Lowering)
         elseif kind === :opinit
             o = ops[x]
             push!(body, _block!(L, o.call.source, () -> begin
-                kws = [Expr(:kw, k, _emit(v, (), L)) for (k, v) in o.call.kwargs if k === :init]
+                kws = [Expr(:kw, k, _oparg(v, o, L)) for (k, v) in o.call.kwargs if k === :init]
                 s = Symbol("s", x)
-                quote
+                isempty(o.dims) ? quote
                     $s = $initial_states($(QuoteNode(o.op)), $(_opargs(o, L)...); $(kws...))
                     u0[$(o.range)] .= $s
+                end : quote
+                    $s = $(_opstates(o, :u0))
+                    $_op_init!($s, $(QuoteNode(o.op)), $(_opargs(o, L)...); $(kws...))
                 end
             end))
         else

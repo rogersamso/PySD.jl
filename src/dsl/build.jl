@@ -24,6 +24,7 @@ end
 struct Operator
     call::OperatorCall
     op::StatefulOperator
+    dims::Tuple                   # an operator of arrays: one set of hidden stocks per element
     range::UnitRange{Int}         # its hidden stocks in the state vector
 end
 
@@ -103,12 +104,19 @@ function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple
         k += len
     end
     ops = Operator[]
+    L = Lowering(byname, env)
     for call in r.operators
         op = _make_operator(call, byname, p0, env, inputs, t0, dt)
-        push!(ops, Operator(call, op, (k + 1):(k + nstates(op))))
-        k += nstates(op)
+        L.src = call.source
+        dims = _union(call.source, (_shape(a, L) for a in [call.args; [v for (k, v) in call.kwargs if k === :init]])...)
+        push!(L.opdims, dims)
+        n = nstates(op) * prod(length.(_labels.(dims)); init = 1)
+        push!(ops, Operator(call, op, dims, (k + 1):(k + n)))
+        k += n
     end
-    L = Lowering(byname, env, Pair{Symbol,Any}[], Any[], LineNumberNode(0))
+    for (i, o) in enumerate(ops)
+        isempty(o.dims) || push!(L.buffers, Symbol("o", i) => o.dims)     # the operator's value
+    end
     for v in vars
         v.kind === :aux && !isempty(v.dims) && push!(L.buffers, v.id => v.dims)
     end
@@ -284,8 +292,8 @@ function _make_operator(c::OperatorCall, byname, p0, env, inputs, t0, dt)
     k === :sample_if_true && return SampleIfTrue(dt)
     k === :initial && return Initial()
     if k === :fixed_delay
-        n = round(Int, sv(c.kwargs[:τ]) / dt)
-        n >= 1 || error("$(_where(c.source)): a fixed delay needs τ ≥ Δt")
+        # as Python PySD: at least one step; 0.5 steps round to 1
+        n = round(Int, max(sv(c.kwargs[:τ]) / dt, 1) + SMALL_VENSIM)
         return FixedDelay(n, dt)
     end
     error("unknown operator $k")

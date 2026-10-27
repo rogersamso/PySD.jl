@@ -34,7 +34,9 @@ mutable struct Lowering
     buffers::Vector{Pair{Symbol,Any}}   # name => dims, allocated once per run
     pre::Vector{Any}                    # statements that fill buffers before the current one
     src::LineNumberNode
+    opdims::Vector{Any}                 # the dimensions of each operator's value
 end
+Lowering(byname, env) = Lowering(byname, env, Pair{Symbol,Any}[], Any[], LineNumberNode(0), Any[])
 
 function _buffer!(L::Lowering, dims)
     name = Symbol("w", length(L.buffers) + 1)
@@ -68,6 +70,7 @@ _fn(x) = x isa QuoteNode ? x.value : x
 
 function _shape(x, L::Lowering)
     x isa VarRef && return L.byname[x.name].dims
+    x isa OpRef && return L.opdims[x.k]
     x isa Expr || return ()
     if x.head === :ref
         return _selection(x, L)[2]
@@ -210,7 +213,7 @@ function _emit(x, T, L::Lowering)
         v = L.byname[x.name]
         return _layout(v.id, v.dims, T, L)
     end
-    x isa OpRef && return Symbol("o", x.k)
+    x isa OpRef && return _layout(Symbol("o", x.k), L.opdims[x.k], T, L)
     x isa EnvRef && return :(p.env.$(x.key))
     x isa InputRef && return :(p.inputs.$(x.name))
     x isa Expr || return x
@@ -292,6 +295,15 @@ function _materialize(x, S, L)
     else
         push!(L.pre, :($w .= $(_emit(x, S, L))))
     end
+    return w
+end
+
+# `x` laid out in exactly the dimensions `S`, in a buffer if it isn't already
+function _materialize_as(x, S, L)
+    x isa VarRef && L.byname[x.name].dims == S && return L.byname[x.name].id
+    w = _buffer!(L, S)
+    push!(L.pre, :($w = p.work.$w))
+    push!(L.pre, :($w .= $(_emit(x, S, L))))
     return w
 end
 

@@ -4,7 +4,7 @@
 const _CONTROL = Set(["time", "initial_time", "final_time", "time_step", "saveper"])
 _clean(s) = replace(lowercase(strip(s)), r"[^a-z0-9]+" => "_")
 
-function compare_reference(res, ref_file; floor = 1e-6)
+function compare_reference(res, ref_file; floor = 1e-6, renames = Dict{Symbol,Symbol}())
     sep = endswith(ref_file, ".tab") ? '\t' : ','
     lines = split(replace(read(ref_file, String), r"\r\n?" => "\n"), '\n'; keepempty = false)
     header = [strip(strip(h), '"') for h in split(lines[1], sep)]
@@ -13,6 +13,7 @@ function compare_reference(res, ref_file; floor = 1e-6)
     for (c, col) in enumerate(header)
         name = Symbol(_clean(split(col, "[")[1]))
         string(name) in _CONTROL && continue
+        name = get(renames, name, name)             # names the DSL had to change
         haskey(res, name) || (push!(missing, col); continue)
         labels = occursin("[", col) ? Symbol.(_clean.(split(rstrip(split(col, "[")[2], ']'), ","))) : Symbol[]
         vals = res[name]

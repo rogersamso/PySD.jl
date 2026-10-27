@@ -89,8 +89,12 @@ struct SampleIfTrue <: StatefulOperator
 end
 nstates(::SampleIfTrue) = 1
 initial_states(::SampleIfTrue, c, x; init = x) = [float(init)]
-rates!(d, op::SampleIfTrue, s, c, x) = (d[1] = (ifelse(c, x, s[1]) - s[1]) / op.dt)
-output(::SampleIfTrue, s, c, x) = ifelse(c, x, s[1])
+rates!(d, op::SampleIfTrue, s, c, x) = (d[1] = (ifelse(_true(c), x, s[1]) - s[1]) / op.dt)
+output(::SampleIfTrue, s, c, x) = ifelse(_true(c), x, s[1])
+
+# a condition: true or false, or a number (an array of conditions holds 1.0 and 0.0)
+_true(c::Bool) = c
+_true(c::Real) = !iszero(c)
 output_args(::SampleIfTrue) = (1, 2)
 
 "INITIAL: the value at the initial time, `x(t₀)` on the right of an equation."
@@ -175,4 +179,35 @@ function _bc_dims(f, args...)
     arrays = [a for a in args if a isa AbstractDimArray]
     all(a -> DimensionalData.dims(a) == DimensionalData.dims(arrays[1]), arrays) && return f.(args...)
     return broadcast_dims(f, args...)
+end
+
+# --- operators of arrays: the scalar operator, element by element -------------
+# The hidden stocks of an operator with dimensions are a matrix: its stages,
+# then the elements (`s[:, I]` for element I); arguments are numbers or arrays
+# laid out in the operator's dimensions.  (The helpers are specialized on
+# their arguments, otherwise Julia passes them on as a tuple it allocates.)
+
+_at(a::AbstractArray, I) = @inbounds a[I]
+_at(a, I) = a
+_at(kw::NamedTuple, I) = map(v -> _at(v, I), kw)
+
+function _op_output!(out, op::O, s, args::Vararg{Any,N}) where {O,N}
+    for I in CartesianIndices(out)
+        @inbounds out[I] = output(op, view(s, :, I), map(a -> _at(a, I), args)...)
+    end
+    return out
+end
+
+function _op_rates!(d, op::O, s, args::Vararg{Any,N}) where {O,N}
+    for I in CartesianIndices(Base.tail(axes(s)))
+        rates!(view(d, :, I), op, view(s, :, I), map(a -> _at(a, I), args)...)
+    end
+    return d
+end
+
+function _op_init!(s, op, args...; kw...)
+    for I in CartesianIndices(Base.tail(axes(s)))
+        s[:, I] .= initial_states(op, map(a -> _at(a, I), args)...; _at(values(kw), I)...)
+    end
+    return s
 end

@@ -12,14 +12,22 @@ end
 _dsl(name) = Base.include(_module(), joinpath(@__DIR__, "dsl", name * ".jl"))
 
 @testset "DSL: Vensim's results" begin
-    for (model, ref, tol) in [("teacup", "samples/teacup/output.csv", 1e-5),
-                              ("subscript_2d_arrays", "tests/subscript_2d_arrays/output.tab", 1e-5),
-                              ("subscript_transposition", "tests/subscript_transposition/output.tab", 1e-12),
-                              ("smooth", "tests/smooth/output.tab", 1e-5)]
+    # floor: relative errors at least to it, where Vensim's single-precision
+    # arithmetic leaves about -4e-6 in a stock that should be zero
+    for (model, ref, tol, floor) in [("teacup", "samples/teacup/output.csv", 1e-5, 1e-6),
+                                     ("subscript_2d_arrays", "tests/subscript_2d_arrays/output.tab", 1e-5, 1e-6),
+                                     ("subscript_transposition", "tests/subscript_transposition/output.tab", 1e-12, 1e-6),
+                                     ("smooth", "tests/smooth/output.tab", 1e-5, 1e-6),
+                                     ("subscripted_smooth", "tests/subscripted_smooth/output.tab", 1e-5, 1e-6),
+                                     ("subscripted_trend", "tests/subscripted_trend/output.tab", 1e-4, 1e-6),
+                                     ("subscripted_delays", "tests/subscripted_delays/output.tab", 1e-5, 1.0),
+                                     ("delay_fixed", "tests/delay_fixed/output.tab", 1e-12, 1e-6),
+                                     ("sample_if_true", "tests/sample_if_true/output.tab", 1e-5, 1e-6)]
         m = _dsl(model)
         res = run_model(m)
         if HAS_TEST_MODELS
-            r = compare_reference(res, joinpath(TEST_MODELS, "..", ref))
+            r = compare_reference(res, joinpath(TEST_MODELS, "..", ref); floor,
+                                  renames = Dict(:delay => :delay_time))      # `delay` is the function
             @test r.compared > 0
             @test isempty(r.missing)
             @test r.worst < tol
@@ -151,4 +159,11 @@ end
     u = m2.init(p); du = similar(u)
     allocs(f::F, du, u, p) where {F} = (f(du, u, p, 0.0); @allocated f(du, u, p, 0.0))
     @test allocs(m2.rhs!, du, u, p) == 0
+    # operators of arrays: their hidden stocks element by element, nothing allocated either
+    for name in ("subscripted_smooth", "subscripted_delays", "sample_if_true")
+        m3 = _dsl(name)
+        p = PySD._runparams(m3, m3.params(m3.inputs, (;), m3.env, m3.t0, m3.dt), m3.inputs)
+        u = m3.init(p); du = similar(u)
+        @test allocs(m3.rhs!, du, u, p) == 0
+    end
 end
