@@ -70,7 +70,7 @@ end
     # Vensim POWER / numpy.power (also used for `^`): (-2)^2 = 4
     @test pysd_power(-2.0, 2.0) == 4.0
     @test pysd_power(4, -1) == 0.25
-    @test pysd_power(-8.0, 1 / 3) === NaN        # negative base, non-integer exponent (numpy: nan)
+    @test isnan(pysd_power(-8.0, 1 / 3))         # negative base, non-integer exponent (numpy: nan)
 end
 
 @testset "time functions" begin
@@ -161,14 +161,14 @@ end
     @test size(a) == (2, 3)
     a[1, 2] = 4.0
     @test a[1, 2] == 4.0
-    @test a[5, 5] == 0.0                 # out of bounds reads give zero
+    @test isnan(a[5, 5])                 # out of bounds reads are undefined: NaN
     a[9, 9] = 1.0                        # and writes are ignored
     @test sum(a.data) == 4.0
     b = pysd_safe([1.0, 2.0])
-    @test b[2] == 2.0 && b[3] == 0.0
+    @test b[2] == 2.0 && isnan(b[3])
     c = pysd_safe(zeros(2, 2, 2))
     c[2, 2, 2] = 1.0
-    @test c[2, 2, 2] == 1.0 && c[3, 1, 1] == 0.0
+    @test c[2, 2, 2] == 1.0 && isnan(c[3, 1, 1])
     @test pysd_safe(3.0) === 3.0
 end
 
