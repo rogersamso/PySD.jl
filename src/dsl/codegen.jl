@@ -1,27 +1,29 @@
 # The generated code.  Names become local variables (v1, v2, …), operator
 # values o1, o2, …, their hidden stocks s1, s2, …; captured Julia values are
-# fields of `env`, input sheets fields of `inputs`.
+# fields of `env`, input sheets fields of `inputs`.  Parameters and constants
+# are computed once, with DimArrays (params); the code that runs at every step
+# works on plain arrays (lower.jl), with buffers in `p.work`.
 
 _compile(ex) = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, ex)
 
-function _lower(x, byname, mode)
+# --- parameters and constants: computed once ------------------------------------
+
+function _lower_once(x, byname)
     x isa VarRef && return byname[x.name].id
-    x isa OpRef && return Symbol("o", x.k)
-    x isa EnvRef && return mode === :params ? :(env.$(x.key)) : :(p.env.$(x.key))
-    x isa InputRef && return mode === :params ? :(inputs.$(x.name)) : :(p.inputs.$(x.name))
-    x isa Expr && return Expr(x.head, (_lower(a, byname, mode) for a in x.args)...)
+    x isa EnvRef && return :(env.$(x.key))
+    x isa InputRef && return :(inputs.$(x.name))
+    x isa Expr && return Expr(x.head, (_lower_once(a, byname) for a in x.args)...)
     return x
 end
 
-# `id = …` for a variable from its equations (or its parts)
-function _assign(v::Var, parts, byname, mode)
-    if length(parts) == 1 && isempty(parts[1].sels)
-        rhs = _lower(parts[1].rhs, byname, mode)
-        return isempty(v.dims) ? :($(v.id) = $rhs) : :($(v.id) = $_with_dims($rhs, $(QuoteNode(v.dims))))
+function _assign_once(v::Var, byname)
+    if length(v.parts) == 1 && isempty(v.parts[1].sels)
+        rhs = _lower_once(v.parts[1].rhs, byname)
+        return :($(v.id) = $_with_dims($rhs, $(QuoteNode(v.dims))))
     end
     code = Any[:($(v.id) = $_blank($(QuoteNode(v.dims))))]
-    for p in parts
-        push!(code, :($_setpart!($(v.id), $(_lower(p.rhs, byname, mode)), $(QuoteNode((; p.sels...))))))
+    for p in v.parts
+        push!(code, :($_setpart!($(v.id), $(_lower_once(p.rhs, byname)), $(QuoteNode((; p.sels...))))))
     end
     return Expr(:block, code...)
 end
@@ -35,62 +37,106 @@ function _params_code(order, env)
             push!(body, :(if haskey(overrides, $key)
                               $(v.id) = $_with_dims(overrides[$key], $(QuoteNode(v.dims)))
                           else
-                              $(_assign(v, v.parts, byname, :params))
+                              $(_assign_once(v, byname))
                           end))
         else
-            push!(body, _assign(v, v.parts, byname, :params))
+            push!(body, _assign_once(v, byname))
         end
     end
-    ids = [v.id for v in order]
-    push!(body, :(return (; $(ids...))))
+    # what the code at every step reads: plain arrays in the declared order
+    plain = [Expr(:(=), v.id, :($_plain($(v.id), $(QuoteNode(v.dims))))) for v in order]
+    push!(body, Expr(:tuple, Expr(:parameters, plain...)))
     return :(function (inputs, overrides, env, t0, dt)
                  $(body...)
              end)
 end
 
-function _unpack(vars, statevec)
-    code = Any[]
-    for v in vars
-        if v.kind in (:parameter, :constant)
-            push!(code, :($(v.id) = p.par.$(v.id)))
-        end
-    end
-    return code
+_plain(x, ::Tuple{}) = x
+_plain(x::AbstractDimArray, dims) = Array(parent(_align(x, dims)))
+_plain(x::AbstractDimArray, ::Tuple{}) = ndims(x) == 0 ? x[] : x
+_plain(x, dims) = x
+
+# --- the code at every step ---------------------------------------------------------
+
+function _block!(L::Lowering, src, build)
+    L.pre = Any[]
+    L.src = src
+    code = build()
+    return Expr(:block, L.pre..., code)
 end
 
-function _unpack_states(vars, ops, statevec, mode = :rhs)
+_unpack(vars) = [:($(v.id) = p.par.$(v.id)) for v in vars if v.kind in (:parameter, :constant)]
+
+_size(dims) = Tuple(length(_labels(d)) for d in dims)
+
+function _unpack_states(vars, ops, statevec, u)
     code = Any[]
     for v in vars
         v.kind === :stock || continue
         r = statevec[v.name]
-        # saved results get copies: the state vector changes at the next step
-        view_ = mode === :observe ? :(copy($_state_view(u, $r, $(QuoteNode(v.dims))))) :
-                                    :($_state_view(u, $r, $(QuoteNode(v.dims))))
-        push!(code, isempty(v.dims) ? :($(v.id) = u[$(first(r))]) : :($(v.id) = $view_))
+        push!(code, isempty(v.dims) ? :($(v.id) = $u[$(first(r))]) :
+                                      :($(v.id) = reshape(view($u, $r), $(_size(v.dims)))))
     end
     for (k, o) in enumerate(ops)
-        push!(code, :($(Symbol("s", k)) = view(u, $(o.range))))
+        push!(code, :($(Symbol("s", k)) = view($u, $(o.range))))
     end
     return code
 end
 
-_opargs(o::Operator, byname, mode) = [_lower(a, byname, mode) for a in o.call.args]
+# the target of an equation for a part: an element or a view
+function _part_target(target, v::Var, p::Part, L::Lowering)
+    isempty(p.sels) && return target, v.dims
+    idx = Any[Colon() for _ in v.dims]
+    dims = Any[d for d in v.dims]
+    for (name, sel) in p.sels
+        k = findfirst(d -> _dname(d) === name, v.dims)
+        k === nothing && error("$(_where(p.source)): `$(v.name)` has no dimension `$name`")
+        labels = _labels(v.dims[k])
+        i = _select_indices(labels, sel, L)
+        idx[k] = i
+        dims[k] = i isa Integer ? nothing : Dim{name}(labels[i])
+    end
+    dims = Tuple(d for d in dims if d !== nothing)
+    return (isempty(dims) ? :($target[$(idx...)]) : :(view($target, $(map(QuoteNode, idx)...)))), dims
+end
+
+# a variable from its equations: a number, or its buffer filled in place
+function _assign(v::Var, parts, L::Lowering; target = v.id, fresh = true)
+    code = Any[]
+    !isempty(v.dims) && fresh && push!(code, :($(v.id) = p.work.$(v.id)))
+    for p in parts
+        push!(code, _block!(L, p.source, () -> begin
+            t, dims = _part_target(target, v, p, L)
+            _store(t, p.rhs, dims, L)
+        end))
+    end
+    return Expr(:block, code...)
+end
+
+function _opargs(o::Operator, L::Lowering)
+    map(o.call.args) do a
+        isempty(_shape(a, L)) || error("$(_where(o.call.source)): $(o.call.kind) of an array is not supported yet")
+        _emit(a, (), L)
+    end
+end
 
 _needed(o::Operator) = (n = output_args(o.op); n === :all ? eachindex(o.call.args) : n)
 _needed_refs(o::Operator) = reduce(vcat, (_refs(o.call.args[i]) for i in _needed(o)); init = Symbol[])
 
 # the operator's value, from its hidden stocks and the arguments it needs
-function _opout_code(k, o::Operator, byname)
-    args = [i in _needed(o) ? _lower(a, byname, :run) : nothing for (i, a) in enumerate(o.call.args)]
-    :($(Symbol("o", k)) = $output($(QuoteNode(o.op)), $(Symbol("s", k)), $(args...)))
+function _opout_code(k, o::Operator, L::Lowering)
+    _block!(L, o.call.source, () -> begin
+        all = _opargs(o, L)
+        args = [i in _needed(o) ? a : nothing for (i, a) in enumerate(all)]
+        :($(Symbol("o", k)) = $output($(QuoteNode(o.op)), $(Symbol("s", k)), $(args...)))
+    end)
 end
 
 function _dynamic_order(vars, byname, ops)
     nodes = Any[v for v in vars if v.kind === :aux]
     append!(nodes, 1:length(ops))
     function deps(n)
-        refs = n isa Var ? reduce(vcat, (_refs(p.rhs) for p in n.parts); init = Symbol[]) :
-               _needed_refs(ops[n])
+        refs = n isa Var ? reduce(vcat, (_refs(p.rhs) for p in n.parts); init = Symbol[]) : _needed_refs(ops[n])
         out = Any[]
         for s in unique(refs)
             if startswith(string(s), "#op")
@@ -104,36 +150,38 @@ function _dynamic_order(vars, byname, ops)
     return _toposort(nodes, deps)
 end
 
-function _rhs_code(vars, byname, ops, statevec, mode)
-    body = Any[_unpack(vars, statevec)..., _unpack_states(vars, ops, statevec, mode)...]
-    for n in _dynamic_order(vars, byname, ops)
-        push!(body, n isa Var ? _assign(n, n.parts, byname, :run) : _opout_code(n, ops[n], byname))
+function _rhs_code(vars, ops, statevec, L::Lowering, mode)
+    body = Any[_unpack(vars)..., _unpack_states(vars, ops, statevec, :u)...]
+    for n in _dynamic_order(vars, L.byname, ops)
+        push!(body, n isa Var ? _assign(n, n.parts, L) : _opout_code(n, ops[n], L))
     end
     if mode === :observe
         shown = [v for v in vars if v.kind in (:stock, :aux)]
-        push!(body, :(return NamedTuple{$(Tuple(v.name for v in shown))}(($([v.id for v in shown]...),))))
+        # saved results get copies, with their dimensions
+        vals = [isempty(v.dims) ? v.id : :(DimArray(copy($(v.id)), $(QuoteNode(v.dims)))) for v in shown]
+        push!(body, :(return NamedTuple{$(Tuple(v.name for v in shown))}(($(vals...),))))
         return :(function (u, p, t)
                      $(body...)
                  end)
     end
     for v in vars
         v.kind === :stock || continue
-        r, dims = statevec[v.name], QuoteNode(v.dims)
-        rate = gensym(:rate)
-        if length(v.rate) == 1 && isempty(v.rate[1].sels)
-            push!(body, :($rate = $(_lower(v.rate[1].rhs, byname, :run))))
+        r = statevec[v.name]
+        nonneg = get(v.decl.metadata, :nonnegative, false)
+        if isempty(v.dims)
+            i = first(r)
+            push!(body, _block!(L, v.rate[1].source, () -> _store(:(du[$i]), v.rate[1].rhs, (), L)))
+            nonneg && push!(body, :(du[$i] = max(du[$i], -$(v.id) / p.dt)))
         else
-            push!(body, :($rate = $_blank($dims)))
-            for p in v.rate
-                push!(body, :($_setpart!($rate, $(_lower(p.rhs, byname, :run)), $(QuoteNode((; p.sels...))))))
-            end
+            dv = Symbol("d", v.id)
+            push!(body, :($dv = reshape(view(du, $r), $(_size(v.dims)))))
+            push!(body, _assign(v, v.rate, L; target = dv, fresh = false))
+            nonneg && push!(body, :($dv .= max.($dv, .-$(v.id) ./ p.dt)))
         end
-        get(v.decl.metadata, :nonnegative, false) && push!(body, :($rate = $_nonneg($rate, $(v.id), p.dt)))
-        push!(body, :($_set_rate!(du, $r, $rate, $dims)))
     end
     for (k, o) in enumerate(ops)
-        push!(body, :($rates!(view(du, $(o.range)), $(QuoteNode(o.op)), $(Symbol("s", k)),
-                               $(_opargs(o, byname, :run)...))))
+        push!(body, _block!(L, o.call.source, () ->
+            :($rates!(view(du, $(o.range)), $(QuoteNode(o.op)), $(Symbol("s", k)), $(_opargs(o, L)...)))))
     end
     push!(body, :(return nothing))
     return :(function (du, u, p, t)
@@ -141,8 +189,8 @@ function _rhs_code(vars, byname, ops, statevec, mode)
              end)
 end
 
-function _init_code(vars, byname, ops, statevec, n)
-    # nodes: (:stock, v), (:aux, v), (:opinit, k), (:opout, k)
+function _init_code(vars, ops, statevec, n, L::Lowering)
+    byname = L.byname
     node(s::Symbol) = startswith(string(s), "#op") ? (:opout, parse(Int, string(s)[4:end])) :
                       byname[s].kind === :stock ? (:stock, byname[s]) :
                       byname[s].kind === :aux ? (:aux, byname[s]) : nothing
@@ -151,10 +199,9 @@ function _init_code(vars, byname, ops, statevec, n)
         refs = kind === :stock ? _refs(x.init.rhs) :
                kind === :aux ? reduce(vcat, (_refs(p.rhs) for p in (x.init === nothing ? x.parts : [x.init])); init = Symbol[]) :
                kind === :opinit ? reduce(vcat, (_refs(a) for a in [ops[x].call.args; collect(values(ops[x].call.kwargs))]); init = Symbol[]) :
-               Symbol[]
+               _needed_refs(ops[x])
         out = Any[]
         kind === :opout && push!(out, (:opinit, x))
-        kind === :opout && (refs = _needed_refs(ops[x]))
         for s in unique(refs)
             m = node(s)
             m === nothing || push!(out, m)
@@ -165,22 +212,31 @@ function _init_code(vars, byname, ops, statevec, n)
     append!(nodes, ((:aux, v) for v in vars if v.kind === :aux))
     append!(nodes, ((:opinit, k) for k in eachindex(ops)))
     append!(nodes, ((:opout, k) for k in eachindex(ops)))
-    body = Any[:(t = p.t0), :(u0 = zeros($n)), _unpack(vars, statevec)...]
+    body = Any[:(t = p.t0), :(u0 = zeros($n)), _unpack(vars)...]
     for (kind, x) in _toposort(nodes, deps)
         if kind === :stock
-            push!(body, _assign(x, [x.init], byname, :run))
-            push!(body, :($_write!(u0, $(statevec[x.name]), $(x.id), $(QuoteNode(x.dims)))))
+            r = statevec[x.name]
+            if isempty(x.dims)
+                push!(body, _block!(L, x.init.source, () -> _store(x.id, x.init.rhs, (), L)))
+                push!(body, :(u0[$(first(r))] = $(x.id)))
+            else
+                push!(body, :($(x.id) = reshape(view(u0, $r), $(_size(x.dims)))))
+                push!(body, _block!(L, x.init.source, () -> _store(x.id, x.init.rhs, x.dims, L)))
+            end
         elseif kind === :aux
-            push!(body, _assign(x, x.init === nothing ? x.parts : [x.init], byname, :run))
+            push!(body, _assign(x, x.init === nothing ? x.parts : [x.init], L))
         elseif kind === :opinit
             o = ops[x]
-            kws = [Expr(:kw, k, _lower(v, byname, :run)) for (k, v) in o.call.kwargs if k === :init]
-            s = Symbol("s", x)
-            push!(body, :($s = $initial_states($(QuoteNode(o.op)), $(_opargs(o, byname, :run)...);
-                                               $(kws...))))
-            push!(body, :(u0[$(o.range)] .= $s))
+            push!(body, _block!(L, o.call.source, () -> begin
+                kws = [Expr(:kw, k, _emit(v, (), L)) for (k, v) in o.call.kwargs if k === :init]
+                s = Symbol("s", x)
+                quote
+                    $s = $initial_states($(QuoteNode(o.op)), $(_opargs(o, L)...); $(kws...))
+                    u0[$(o.range)] .= $s
+                end
+            end))
         else
-            push!(body, _opout_code(x, ops[x], byname))
+            push!(body, _opout_code(x, ops[x], L))
         end
     end
     push!(body, :(return u0))
@@ -189,7 +245,7 @@ function _init_code(vars, byname, ops, statevec, n)
              end)
 end
 
-# --- helpers the generated code calls ------------------------------------------
+# --- helpers -----------------------------------------------------------------------
 
 _with_dims(x, ::Tuple{}) = x isa Integer ? float(x) : x
 function _with_dims(x, dims::Tuple)
@@ -216,14 +272,3 @@ function _setpart!(x::AbstractDimArray, val, sels::NamedTuple)
     target .= val isa AbstractDimArray && ndims(target) > 0 ? parent(_align(val, DimensionalData.dims(target))) : val
     return x
 end
-
-_state_view(u, r, dims) = DimArray(reshape(view(u, r), map(length, dims)), dims)
-
-_set_rate!(du, r, x::Number, dims) = (du[first(r)] = x; nothing)
-_set_rate!(du, r, x::AbstractDimArray, dims) = (copyto!(view(du, r), _align(x, dims)); nothing)
-
-_write!(u0, r, x::Number, dims) = (u0[first(r)] = x; nothing)
-_write!(u0, r, x::AbstractDimArray, dims) = (copyto!(view(u0, r), _align(x, dims)); nothing)
-
-_nonneg(rate::Number, x::Number, dt) = max(rate, -x / dt)
-_nonneg(rate, x, dt) = _bc((r, s) -> max(r, -s / dt), rate, x)

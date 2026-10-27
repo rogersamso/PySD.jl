@@ -90,6 +90,7 @@ include("dsl/syntax.jl")
 include("dsl/operators.jl")
 include("dsl/resolve.jl")
 include("dsl/build.jl")
+include("dsl/lower.jl")
 include("dsl/codegen.jl")
 include("dsl/run.jl")
 

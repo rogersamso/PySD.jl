@@ -17,11 +17,21 @@ end
 function Base.getindex(r::Results, name::Union{Symbol,AbstractString})
     v = get(r.model.byname, Symbol(name), nothing)
     v === nothing && throw(KeyError(name))
-    v.kind in (:parameter, :constant) && return getfield(r.par, v.id)
+    if v.kind in (:parameter, :constant)
+        x = getfield(r.par, v.id)
+        return isempty(v.dims) ? x : DimArray(x, v.dims)
+    end
     return [getfield(s, v.name) for s in r.saved]
 end
 Base.haskey(r::Results, name::Union{Symbol,AbstractString}) = haskey(r.model.byname, Symbol(name))
 Base.keys(r::Results) = [v.name for v in r.model.vars]
+
+# what the generated code reads: parameters, captured values, inputs, the
+# time, and the buffers it fills in place (one set per run)
+function _runparams(m::Model, par, inputs)
+    work = NamedTuple{Tuple(first.(m.buffers))}(Tuple(zeros(last(b)) for b in m.buffers))
+    return (; par, env = m.env, inputs, t0 = m.t0, dt = m.dt, work)
+end
 
 """
     run_model(model; params = (;), inputs = (;))
@@ -33,7 +43,7 @@ input sheets (`(; scen_w = excel(…))`).
 function run_model(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;))
     inp = merge(m.inputs, inputs)
     par = m.params(inp, params, m.env, m.t0, m.dt)
-    p = (; par, env = m.env, inputs = inp, t0 = m.t0, dt = m.dt)
+    p = _runparams(m, par, inp)
     u = m.init(p)
     du = similar(u)
     nsteps = round(Int, (m.tf - m.t0) / m.dt)

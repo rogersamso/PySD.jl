@@ -47,6 +47,7 @@ struct Model
     time_unit::Any
     inputs::NamedTuple
     env::NamedTuple
+    buffers::Vector{Pair{Symbol,Tuple}}   # arrays the code at every step fills in place
     params::Function
     init::Function
     rhs!::Function
@@ -107,11 +108,16 @@ function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple
         push!(ops, Operator(call, op, (k + 1):(k + nstates(op))))
         k += nstates(op)
     end
-    init = _compile(_init_code(vars, byname, ops, statevec, k))
-    rhs! = _compile(_rhs_code(vars, byname, ops, statevec, :rhs))
-    observe = _compile(_rhs_code(vars, byname, ops, statevec, :observe))
+    L = Lowering(byname, env, Pair{Symbol,Any}[], Any[], LineNumberNode(0))
+    for v in vars
+        v.kind === :aux && !isempty(v.dims) && push!(L.buffers, v.id => v.dims)
+    end
+    init = _compile(_init_code(vars, ops, statevec, k, L))
+    rhs! = _compile(_rhs_code(vars, ops, statevec, L, :rhs))
+    observe = _compile(_rhs_code(vars, ops, statevec, L, :observe))
+    buffers = Pair{Symbol,Tuple}[name => _size(dims) for (name, dims) in L.buffers]
     return Model(vars, byname, ops, k, t0, dt, Float64(last(time)), Float64(saveat), time_unit,
-                 inputs, env, params, init, rhs!, observe)
+                 inputs, env, buffers, params, init, rhs!, observe)
 end
 
 # --- equations --------------------------------------------------------------

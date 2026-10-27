@@ -1,6 +1,7 @@
 # The DSL: @equations and Model, checked against Vensim's outputs
 # (SDXorg/test-models) and on the mistakes Model must catch.
-using DimensionalData: Dim, At, AbstractDimArray
+using DimensionalData: Dim, At, AbstractDimArray, DimArray, broadcast_dims
+using LinearAlgebra: I
 include(joinpath(@__DIR__, "dsl", "check.jl"))
 
 function _module()
@@ -90,4 +91,36 @@ end
     @test _build(parts("x[d = At(:a)] ~ 1\nx[d = Not(At(:a))] ~ 2")) isa Model
     @test occursin("overlap", _build(parts("x[d = At(:a)] ~ 1\nx ~ 2")))
     @test occursin("don't cover", _build(parts("x[d = At(:a)] ~ 1")))
+end
+
+@testset "DSL: arrays on plain arrays" begin
+    mod = _module()
+    m = Base.include(mod, joinpath(@__DIR__, "dsl", "arrays.jl"))
+    r = run_model(m)
+    a, a1, b, years = mod.a, mod.a1, mod.b, mod.years
+    M = DimArray([0.1 0.2 0.0; 0.0 0.1 0.3; 0.2 0.0 0.1], (a, a1))
+    v = DimArray([1.0, 2.0, 3.0], a)
+    w = DimArray([1.0, 2.0], b)
+    flow = broadcast_dims(*, w, v) ./ 10                       # (b, a)
+    @test r[:flow][end] == flow
+    # the stock grows by the flow, laid out in its own order (a, b)
+    @test r[:s][end] ≈ 1 .+ 2 .* permutedims(flow, (a, b))
+    @test parent(r[:leontief]) ≈ inv(I - parent(M))
+    @test parent(r[:ia][1]) ≈ I - parent(M)
+    @test parent(r[:inverse][1]) ≈ inv(I - parent(M))
+    @test parent(r[:product][1]) ≈ inv(I - parent(M)) * parent(v)
+    @test parent(r[:shifted][1]) == [0.0, 1.0, 2.0]
+    @test r[:pick] == [3.0, 3.0, 6.0, 6.0, 9.0]              # the year changes at t = 1 and t = 2
+    @test parent(r[:part][1]) == [1.0, 4.0, 6.0]
+    @test parent(r[:notx][1]) == [6.0, 0.0, 0.0]
+    @test r[:total][end] ≈ sum(r[:s][end])
+    @test parent(r[:swapped][1]) == parent(M)                 # renamed, not transposed
+    # nothing allocated at each step, but by inv (LAPACK needs a copy and a factorization)
+    src = read(joinpath(@__DIR__, "dsl", "arrays.jl"), String)
+    src = replace(src, r"\n    inverse ~ [^\n]*" => "", r"\n        inverse\(t\)[^\n]*" => "")
+    m2 = Base.include_string(_module(), src)
+    p = PySD._runparams(m2, m2.params(m2.inputs, (;), m2.env, m2.t0, m2.dt), m2.inputs)
+    u = m2.init(p); du = similar(u)
+    allocs(f::F, du, u, p) where {F} = (f(du, u, p, 0.0); @allocated f(du, u, p, 0.0))
+    @test allocs(m2.rhs!, du, u, p) == 0
 end
