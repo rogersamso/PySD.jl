@@ -31,7 +31,8 @@ const _BUILTINS = Dict{Symbol,Any}(
     :prod_over => prod_over, :previous => previous, :piecewise_linear => piecewise_linear,
     :zidz => pysd_zidz, :xidz => pysd_xidz,
     :At => DimensionalData.At, :Not => DimensionalData.Not, :set => DimensionalData.set,
-    :I => LinearAlgebra.I, :inv => LinearAlgebra.inv)
+    :I => LinearAlgebra.I, :inv => LinearAlgebra.inv,
+    :constant => constant, :lookup => lookup, :data => data)
 
 "A stateful operator call found in an equation."
 struct OperatorCall
@@ -122,6 +123,9 @@ function _resolve(r::Resolver, i, s::Symbol, bound, src)
         return VarRef(full)
     end
     haskey(r.inputs, s) && return InputRef(s)
+    # PySD's functions for equations come before Julia values of the same name
+    # (DimensionalData exports `lookup`, for instance)
+    haskey(_BUILTINS, s) && return QuoteNode(_BUILTINS[s])
     if haskey(env, s)
         v = env[s]
         v isa EquationSet && error("$(_where(src)): `$s` is a component; use its variables, `$s.name`")
@@ -235,6 +239,6 @@ function _resolve_call(r::Resolver, i, x, bound, src)
         end
     end
     args = Any[res(a) for a in pos]
-    isempty(kw) || push!(args, Expr(:parameters, (Expr(:kw, k, res(v)) for (k, v) in kw)...))
+    isempty(kw) || pushfirst!(args, Expr(:parameters, (Expr(:kw, k, res(v)) for (k, v) in kw)...))
     return Expr(:call, res(f), args...)
 end

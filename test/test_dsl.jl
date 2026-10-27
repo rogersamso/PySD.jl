@@ -27,6 +27,34 @@ _dsl(name) = Base.include(_module(), joinpath(@__DIR__, "dsl", name * ".jl"))
     end
 end
 
+@testset "DSL: Excel inputs, Vensim's results" begin
+    # 1 + sin(11) and the like cancel to about 1e-5 in Vensim's arithmetic: relative
+    # errors at least to 1e-3 there (absolute differences of 1e-8)
+    for (model, folder, floor, tol) in [("get_xls_cellrange", "get_xls_cellrange", 1e-6, 1e-12),
+                                        ("get_lookups_subscripted_args", "get_lookups_subscripted_args", 1e-3, 1e-4)]
+        HAS_TEST_MODELS || continue
+        mod = _module()
+        dir = joinpath(TEST_MODELS, folder)
+        Core.eval(mod, :(const INPUTS = $dir))
+        m = Base.include(mod, joinpath(@__DIR__, "dsl", model * ".jl"))
+        ref = first(f for f in readdir(dir; join = true) if endswith(f, ".tab"))
+        r = compare_reference(run_model(m), ref; floor)
+        @test r.compared > 100
+        @test isempty(r.missing)
+        @test r.worst < tol
+    end
+    if HAS_TEST_MODELS
+        # anything callable replaces a lookup between runs; a constant is a number
+        mod = _module()
+        Core.eval(mod, :(const INPUTS = $(joinpath(TEST_MODELS, "get_xls_cellrange"))))
+        m = Base.include(mod, joinpath(@__DIR__, "dsl", "get_xls_cellrange.jl"))
+        base = run_model(m)
+        changed = run_model(m; params = (; lookup1 = x -> 0.0, data1 = t -> 1.0))
+        @test changed[:final1][end] == base[:value1] .+ 10
+        @test changed[:final2] == base[:final2]
+    end
+end
+
 @testset "DSL: components, connections, dispatch" begin
     mod = _module()
     Base.include(mod, joinpath(@__DIR__, "dsl", "beer_game.jl"))

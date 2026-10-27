@@ -103,6 +103,9 @@ function _shape(x, L::Lowering)
             (f === :ifelse || f === ifelse) && !isempty(shapes[1]) &&
                 error("$(_where(L.src)): ifelse with an array condition; use ifelse.(…)")
             return _union(L.src, shapes...)
+        elseif x.args[1] isa VarRef && !isempty(L.byname[x.args[1].name].dims)
+            # a lookup with dimensions: its series, at the argument's elements
+            return _union(L.src, L.byname[x.args[1].name].dims, (_shape(a, L) for a in args)...)
         elseif args isa Vector && any(a -> !isempty(_shape(a, L)), args)
             if x.args[1] isa VarRef      # a lookup called with an array: element by element
                 return _union(L.src, (_shape(a, L) for a in args)...)
@@ -224,6 +227,9 @@ function _emit(x, T, L::Lowering)
            (f in (:+, :-) && length(args) == 2 && (_isI(args[1]) || _isI(args[2]))) ||
            (f === :* && length(args) == 2 && !isempty(_shape(args[1], L)) && !isempty(_shape(args[2], L)))
         return _emit_materialized(x, shape, T, L)
+    elseif f isa VarRef && !isempty(L.byname[f.name].dims)
+        v = L.byname[f.name]                     # its series, broadcast as any array
+        return _dotcall(_callf, [_layout(:($(v.id).series), v.dims, T, L); [_emit(a, T, L) for a in args]])
     elseif !isempty(shape) && (f in _ELEMENTWISE || f === :ifelse || f === ifelse || x.args[1] isa VarRef)
         fcode = f in _ELEMENTWISE ? f : f === ifelse ? :ifelse : _emit(x.args[1], (), L)
         return _dotcall(fcode, [_emit(a, T, L) for a in args])

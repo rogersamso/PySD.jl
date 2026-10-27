@@ -1,9 +1,10 @@
 # Compare every column of a Vensim reference output (SDXorg/test-models) with
-# a model's results: the number of values compared and the largest relative error.
+# a model's results: the number of values compared and the largest relative
+# error (relative to `floor` at least, for values that cancel to nearly zero).
 const _CONTROL = Set(["time", "initial_time", "final_time", "time_step", "saveper"])
 _clean(s) = replace(lowercase(strip(s)), r"[^a-z0-9]+" => "_")
 
-function compare_reference(res, ref_file)
+function compare_reference(res, ref_file; floor = 1e-6)
     sep = endswith(ref_file, ".tab") ? '\t' : ','
     lines = split(replace(read(ref_file, String), r"\r\n?" => "\n"), '\n'; keepempty = false)
     header = [strip(strip(h), '"') for h in split(lines[1], sep)]
@@ -22,7 +23,7 @@ function compare_reference(res, ref_file)
             v = vals isa AbstractVector && !(vals isa AbstractDimArray) && length(vals) == length(res.time) ? vals[i] : vals
             x = isempty(labels) ? Float64(v) : Float64(v[At.(labels)...])
             ref = parse(Float64, row[c])
-            worst = max(worst, abs(x - ref) / max(abs(ref), 1e-6))
+            worst = max(worst, abs(x - ref) / max(abs(ref), floor))
             compared += 1
         end
     end

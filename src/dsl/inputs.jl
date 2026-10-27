@@ -1,0 +1,85 @@
+# Inputs: Excel sheets as values, and the functions that read them in
+# @parameters, with PySD.jl's readers (the same values as Python PySD).
+
+"""
+    excel(path, sheet)
+
+An Excel sheet, given to `Model` by name in `inputs` and read in
+`@parameters` with `constant`, `lookup` and `data`.  A different scenario is a
+different sheet given to the run: `run_model(m; inputs = (; scen = excel(…)))`.
+"""
+struct ExcelSheet
+    path::String
+    sheet::String
+end
+excel(path::AbstractString, sheet::AbstractString) = ExcelSheet(abspath(path), String(sheet))
+Base.show(io::IO, s::ExcelSheet) = print(io, "excel(", repr(basename(s.path)), ", ", repr(s.sheet), ")")
+
+"""
+    constant(sheet, cells; transpose = false)
+
+A number or an array from a cell, a range or a named range (Vensim's GET
+DIRECT CONSTANTS; `transpose = true` for its `*`).  The declaration gives it
+its dimensions: rows are the first, columns the second.
+"""
+constant(s::ExcelSheet, cells::AbstractString; transpose::Bool = false) =
+    pysd_xlsx_read_constant(s.path, s.sheet, String(cells); transpose)
+
+"""
+    lookup(sheet, x, cells)
+
+A lookup read from Excel (Vensim's GET DIRECT LOOKUPS): `x` are the cells of
+the x values (a named range, or a row number or column letter), `cells` those
+of the y values; called as `f(x)`.  With dimensions, one series per element:
+`f(x)` is an array, and with an array `x` the dimensions line up by name.
+It is read when its declaration gives it its dimensions.
+"""
+lookup(s::ExcelSheet, x::AbstractString, cells::AbstractString) =
+    SeriesCells(s, String(x), String(cells), :interpolate)
+
+"""
+    data(sheet, time, cells; method = :interpolate)
+
+A data series read from Excel (Vensim's GET DIRECT DATA), called with time,
+`d(t)`.  `method` is Vensim's keyword: `:interpolate`, `:hold_backward`,
+`:look_forward` or `:raw`.
+"""
+data(s::ExcelSheet, time::AbstractString, cells::AbstractString; method::Symbol = :interpolate) =
+    SeriesCells(s, String(time), String(cells), method)
+
+"Where a lookup or data series is, read once its dimensions are known."
+struct SeriesCells
+    sheet::ExcelSheet
+    x::String
+    cells::String
+    method::Symbol
+end
+
+_read(c::SeriesCells, n) = pysd_xlsx_build_lookup_dispatch(c.sheet.path, c.sheet.sheet, c.x, c.cells; n, c.method)
+
+"A lookup or data series with dimensions: one series per element."
+struct LookupArray{F,N}
+    series::Array{F,N}
+end
+
+_with_dims(c::SeriesCells, ::Tuple{}) = only(_read(c, 1))
+function _with_dims(c::SeriesCells, dims::Tuple)
+    sz = map(length, dims)
+    s = _read(c, prod(sz))
+    length(s) == prod(sz) || error("$(length(s)) series in $(c.cells) for dimensions of size $sz")
+    # series in Vensim's order (the last dimension fastest), into Julia's
+    a = permutedims(reshape(s, reverse(sz)), reverse(1:length(sz)))
+    return LookupArray(a)
+end
+# one block of cells per element of the first dimension
+function _with_dims(cs::AbstractVector{SeriesCells}, dims::Tuple)
+    length(cs) == length(first(dims)) || error("$(length(cs)) blocks of cells for $(length(first(dims))) elements")
+    parts = [_with_dims(c, Base.tail(dims)).series for c in cs]
+    return LookupArray(stack(parts; dims = 1))
+end
+_with_dims(f::LookupArray, dims::Tuple) =
+    size(f.series) == map(length, dims) ? f : error("series of size $(size(f.series)) for dimensions of size $(map(length, dims))")
+
+_callf(f, x) = f(x)
+_with_dims(cs::AbstractVector{SeriesCells}, ::Tuple{}) = error("several blocks of cells where the declaration has no dimensions")
+_with_dims(f::LookupArray, ::Tuple{}) = error("series with dimensions where the declaration has none")
