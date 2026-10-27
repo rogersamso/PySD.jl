@@ -128,6 +128,23 @@ end
     @test _build(parts("x[d = At(:a)] ~ 1\nx[d = Not(At(:a))] ~ 2")) isa Model
     @test occursin("overlap", _build(parts("x[d = At(:a)] ~ 1\nx ~ 2")))
     @test occursin("don't cover", _build(parts("x[d = At(:a)] ~ 1")))
+    # a fixed delay's steps are counted when the model is built: its delay time,
+    # or what it depends on, can't change between runs; other parameters can
+    m = _build("""@parameters begin
+                      k = 2, [unit = u"s"]
+                      g = 1, [unit = NoUnits]
+                  end
+                  @variables begin
+                      τ, [unit = u"s"]
+                      x(t), [unit = u"s"]
+                      y(t), [unit = u"s"]
+                  end
+                  τ ~ 2k
+                  x ~ g * t
+                  y ~ x(t - τ; init = 0)""")
+    @test m isa Model
+    @test occursin("`k` can't change between runs", try run_model(m; params = (; k = 3)); "" catch e; sprint(showerror, e) end)
+    @test run_model(m; params = (; g = 2))[:x][end] == 20
 end
 
 @testset "DSL: arrays on plain arrays" begin

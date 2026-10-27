@@ -56,7 +56,7 @@ end
 const _ANY = :any
 const _UNKNOWN = :unknown
 
-_declared_unit(v::Var) = (u = v.decl.metadata[:unit]; u === NoUnits ? Unitful.NoUnits : u)
+_declared_unit(v::Var) = (u = unit_value(v.decl.metadata[:unit]); u === NoUnits ? Unitful.NoUnits : u)
 
 _same(a, b) = a === _ANY || b === _ANY || a === _UNKNOWN || b === _UNKNOWN ||
     (Unitful.dimension(a) == Unitful.dimension(b) && Unitful.convfact(a, b) == 1)

@@ -36,9 +36,10 @@ mutable struct Lowering
     src::LineNumberNode
     opdims::Vector{Any}                 # the dimensions of each operator's value
     numerics::Symbol                    # :julia, or :python for Python PySD's digits (numerics.jl)
+    lowered::Dict{Any,Any}              # each equation's code, the same at t₀, at every step and when saving
 end
 Lowering(byname, env; numerics = :julia) =
-    Lowering(byname, env, Pair{Symbol,Any}[], Any[], LineNumberNode(0), Any[], numerics)
+    Lowering(byname, env, Pair{Symbol,Any}[], Any[], LineNumberNode(0), Any[], numerics, Dict{Any,Any}())
 
 function _buffer!(L::Lowering, dims)
     name = Symbol("w", length(L.buffers) + 1)
@@ -122,9 +123,18 @@ function _shape(x, L::Lowering)
     return ()
 end
 
+# set(x, :a => :b) renames a dimension; set(x, :a => Dim{:b}(labels)) also gives
+# it new labels, position by position (Vensim's subscript mappings)
 function _renamed(s, pairs)
-    names = Dict(Symbol(first(p)) => Symbol(last(p)) for p in pairs)
-    return Tuple(haskey(names, _dname(d)) ? Dim{names[_dname(d)]}(_labels(d)) : d for d in s)
+    new = Dict(Symbol(first(p)) => last(p) for p in pairs)
+    return Tuple(map(s) do d
+        haskey(new, _dname(d)) || return d
+        n = new[_dname(d)]
+        n isa Symbol && return Dim{n}(_labels(d))
+        length(_labels(n)) == length(_labels(d)) ||
+            error("set: $(length(_labels(n))) labels for a dimension of $(length(_labels(d)))")
+        return n
+    end)
 end
 
 # x[d = sel, …]: the indices into x, its dimensions after the selection, and

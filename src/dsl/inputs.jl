@@ -57,9 +57,12 @@ end
 
 _read(c::SeriesCells, n) = pysd_xlsx_build_lookup_dispatch(c.sheet.path, c.sheet.sheet, c.x, c.cells; n, c.method)
 
-"A lookup or data series with dimensions: one series per element."
-struct LookupArray{F,N}
-    series::Array{F,N}
+"""
+A lookup or data series with dimensions: one series per element (a DimArray of
+series where values are computed once, a plain array in the code at every step).
+"""
+struct LookupArray{F,N,A<:AbstractArray{F,N}}
+    series::A
 end
 
 _with_dims(c::SeriesCells, ::Tuple{}) = only(_read(c, 1))
@@ -69,17 +72,26 @@ function _with_dims(c::SeriesCells, dims::Tuple)
     length(s) == prod(sz) || error("$(length(s)) series in $(c.cells) for dimensions of size $sz")
     # series in Vensim's order (the last dimension fastest), into Julia's
     a = permutedims(reshape(s, reverse(sz)), reverse(1:length(sz)))
-    return LookupArray(a)
+    return LookupArray(DimArray(a, dims))
 end
 # one block of cells per element of the first dimension
 function _with_dims(cs::AbstractVector{SeriesCells}, dims::Tuple)
     length(cs) == length(first(dims)) || error("$(length(cs)) blocks of cells for $(length(first(dims))) elements")
-    parts = [_with_dims(c, Base.tail(dims)).series for c in cs]
-    return LookupArray(stack(parts; dims = 1))
+    rest = Base.tail(dims)
+    isempty(rest) && return LookupArray(DimArray([only(_read(c, 1)) for c in cs], dims))  # one series each
+    parts = [parent(_with_dims(c, rest).series) for c in cs]
+    return LookupArray(DimArray(stack(parts; dims = 1), dims))
 end
 _with_dims(f::LookupArray, dims::Tuple) =
+    f.series isa AbstractDimArray ? LookupArray(_align(f.series, dims)) :
     size(f.series) == map(length, dims) ? f : error("series of size $(size(f.series)) for dimensions of size $(map(length, dims))")
+_plain(f::LookupArray, dims::Tuple) = f.series isa AbstractDimArray ? LookupArray(Array(parent(_align(f.series, dims)))) : f
+_plain(f::LookupArray, ::Tuple{}) = f
 
 _callf(f, x) = f(x)
+
+# called where values are computed once (constants): an array of the series' values
+(f::LookupArray)(x::Number) = map(s -> s(x), f.series)
+(f::LookupArray)(x::AbstractDimArray) = _bc(_callf, f.series, x)
 _with_dims(cs::AbstractVector{SeriesCells}, ::Tuple{}) = error("several blocks of cells where the declaration has no dimensions")
 _with_dims(f::LookupArray, ::Tuple{}) = error("series with dimensions where the declaration has none")

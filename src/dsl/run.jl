@@ -9,7 +9,8 @@ give their value).
 """
 struct Results
     time::Vector{Float64}
-    saved::Vector{NamedTuple}
+    saved::Vector{Vector{Any}}            # at each saved time, the values in the order of _shown
+    index::Dict{Symbol,Int}
     par::NamedTuple
     model::Model
 end
@@ -21,7 +22,8 @@ function Base.getindex(r::Results, name::Union{Symbol,AbstractString})
         x = getfield(r.par, v.id)
         return isempty(v.dims) ? x : DimArray(x, v.dims)
     end
-    return [getfield(s, v.name) for s in r.saved]
+    i = r.index[v.name]
+    return isempty(v.dims) ? [s[i] for s in r.saved] : [DimArray(s[i], v.dims) for s in r.saved]
 end
 Base.haskey(r::Results, name::Union{Symbol,AbstractString}) = haskey(r.model.byname, Symbol(name))
 Base.keys(r::Results) = [v.name for v in r.model.vars]
@@ -29,6 +31,11 @@ Base.keys(r::Results) = [v.name for v in r.model.vars]
 # what the generated code reads: parameters, captured values, inputs, the
 # time, and the buffers it fills in place (one set per run)
 function _runparams(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;))
+    for k in keys(params)
+        haskey(m.structural, k) &&
+            error("`$k` can't change between runs: it fixes the structure of the operator at $(_where(m.structural[k])) " *
+                  "(a delay's number of steps, an order); build the model again with its new value")
+    end
     inp = merge(m.inputs, inputs)
     par = Base.invokelatest(m.params, inp, params, m.env, m.t0, m.dt)
     work = NamedTuple{Tuple(first.(m.buffers))}(Tuple(zeros(last(b)) for b in m.buffers))
@@ -58,7 +65,7 @@ function run_model(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;),
     du = similar(u)
     nsteps = round(Int, (m.tf - m.t0) / m.dt)
     every = max(1, round(Int, m.saveat / m.dt))
-    times, saved = Float64[], NamedTuple[]
+    times, saved = Float64[], Vector{Any}[]
     for n in 0:nsteps
         t = m.t0 + n * m.dt
         if n % every == 0 || n == nsteps
@@ -69,5 +76,5 @@ function run_model(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;),
         m.rhs!(du, u, p, t)
         @. u += m.dt * du
     end
-    return Results(times, saved, p.par, m)
+    return Results(times, saved, Dict(v.name => i for (i, v) in enumerate(_shown(m.vars))), p.par, m)
 end

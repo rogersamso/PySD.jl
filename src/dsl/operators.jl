@@ -27,6 +27,10 @@ function output end
 # does.  A new operator needs all of them unless it says otherwise.
 output_args(::StatefulOperator) = :all
 
+# The arguments the initial hidden stocks need when an initial value is given
+# (`init = …`; without one, it is the input, the first argument).
+init_args(::StatefulOperator) = :all
+
 "Exponential smoothing of any order (SMOOTH, SMOOTHI, SMOOTH3, SMOOTH3I, SMOOTH N)."
 struct Smooth <: StatefulOperator
     order::Int
@@ -42,6 +46,7 @@ function rates!(d, op::Smooth, s, x, τ)
 end
 output(::Smooth, s, x, τ) = s[end]
 output_args(::Smooth) = ()
+init_args(::Smooth) = ()
 
 "Material delay of any order (DELAY1, DELAY3, DELAY N): the stages hold material."
 struct MaterialDelay <: StatefulOperator
@@ -58,6 +63,7 @@ function rates!(d, op::MaterialDelay, s, x, τ)
 end
 output(op::MaterialDelay, s, x, τ) = s[end] * op.order / τ
 output_args(::MaterialDelay) = (2,)
+init_args(::MaterialDelay) = (2,)
 
 "TREND, as Python PySD: a smoothed level and the fractional growth rate."
 struct Trend <: StatefulOperator end
@@ -82,6 +88,7 @@ function rates!(d, op::FixedDelay, s, x)
 end
 output(::FixedDelay, s, x) = s[end]
 output_args(::FixedDelay) = ()
+init_args(::FixedDelay) = ()
 
 "SAMPLE IF TRUE: the input while the condition holds, the last sampled value after."
 struct SampleIfTrue <: StatefulOperator
@@ -96,6 +103,7 @@ output(::SampleIfTrue, s, c, x) = ifelse(_true(c), x, s[1])
 _true(c::Bool) = c
 _true(c::Real) = !iszero(c)
 output_args(::SampleIfTrue) = (1, 2)
+init_args(::SampleIfTrue) = ()
 
 "INITIAL: the value at the initial time, `x(t₀)` on the right of an equation."
 struct Initial <: StatefulOperator end

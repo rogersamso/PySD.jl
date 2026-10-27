@@ -230,7 +230,33 @@ end
 # A unit as Unitful reads it, except that units with an offset (°C, °F) are
 # used without it: a model never converts between units, so a temperature and
 # a temperature change have the same unit.
-_unit(s::AbstractString) = _unit_value(Meta.parse(s))
+#
+# A declared unit is read word by word when the model is loaded (a misspelt unit
+# is an error there), and combined into one Unitful unit only when it is needed
+# (check_units): each combination is a type of its own, and Julia compiles
+# Unitful's arithmetic again for each one.
+struct DeclaredUnit
+    text::String
+end
+Base.show(io::IO, u::DeclaredUnit) = print(io, "u", repr(u.text))
+
+function _unit(s::AbstractString)
+    _unit_words(Meta.parse(s))
+    return DeclaredUnit(String(s))
+end
+_unit_words(x::Number) = nothing
+_unit_words(x::Symbol) = (_cached(() -> _unit_value(x), x); nothing)
+function _unit_words(x::Expr)
+    (x.head === :call && x.args[1] in (:*, :/, :^, :inv, :sqrt)) || error("can't read the unit `$x`")
+    foreach(_unit_words, x.args[2:end])
+end
+
+unit_value(u::DeclaredUnit) = _cached(() -> _unit_value(Meta.parse(u.text)), u.text)
+unit_value(u) = u
+
+const _UNITS = Dict{Any,Any}()             # read once: Unitful's parser is slow
+const _UNITS_LOCK = ReentrantLock()
+_cached(f, key) = lock(() -> get!(f, _UNITS, key), _UNITS_LOCK)
 _unit_value(x::Number) = x
 function _unit_value(x::Symbol)
     u = Unitful.uparse(string(x); unit_context = unique!([Unitful; Unitful.unitmodules]))

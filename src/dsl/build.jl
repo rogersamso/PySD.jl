@@ -56,6 +56,7 @@ struct Model
     rhs!::Function
     observe::Function
     units::Base.RefValue{Any}             # check_units' result, once it has run
+    structural::Dict{Symbol,Any}          # parameters fixed when built (a delay's steps, an order): => where
 end
 
 Base.show(io::IO, m::Model) = print(io, "Model(", length(m.vars), " names, ",
@@ -98,8 +99,8 @@ function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple
     env = NamedTuple{Tuple(keys(r.env))}(Tuple(values(r.env)))
     t0, dt = Float64(first(time)), Float64(step(time))
     # parameters and constants run once per run: a plain function (comprehensions
-    # in declarations need it; RuntimeGeneratedFunctions mishandles them)
-    params = Core.eval(@__MODULE__, _params_code(order, env, numerics))
+    # in declarations need it; RuntimeGeneratedFunctions mishandles them), barely compiled
+    params = _in_once(_params_code(order, env, numerics))
     p0 = Base.invokelatest(params, inputs, (;), env, t0, dt)
     # the stocks, then the operators' hidden stocks, in the state vector
     statevec = Dict{Symbol,UnitRange{Int}}()
@@ -112,8 +113,12 @@ function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple
     end
     ops = Operator[]
     L = Lowering(byname, env; numerics)
+    structural = Dict{Symbol,Any}()
     for call in r.operators
         op = _make_operator(call, byname, p0, env, inputs, t0, dt)
+        for x in (get(call.kwargs, :order, nothing), call.kind === :fixed_delay ? call.kwargs[:τ] : nothing)
+            x === nothing || foreach(n -> structural[n] = call.source, _parameters_of(x, byname))
+        end
         L.src = call.source
         dims = _union(call.source, (_shape(a, L) for a in [call.args; [v for (k, v) in call.kwargs if k === :init]])...)
         push!(L.opdims, dims)
@@ -132,7 +137,7 @@ function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple
     observe = _compile(_rhs_code(vars, ops, statevec, L, :observe))
     buffers = Pair{Symbol,Tuple}[name => _size(dims) for (name, dims) in L.buffers]
     return Model(vars, byname, ops, k, t0, dt, Float64(last(time)), Float64(saveat), time_unit,
-                 inputs, env, buffers, params, init, rhs!, observe, Ref{Any}(nothing))
+                 inputs, env, buffers, params, init, rhs!, observe, Ref{Any}(nothing), structural)
 end
 
 # --- equations --------------------------------------------------------------
@@ -236,6 +241,18 @@ _uses_time(x::Symbol) = x === :t
 _uses_time(x::Expr) = any(_uses_time, x.args)
 _uses_time(x) = false
 
+# the parameters an expression depends on, through constants and auxiliaries
+function _parameters_of(x, byname, out = Set{Symbol}(), seen = Set{Symbol}())
+    for n in _refs!(Symbol[], x)
+        (n in seen || !haskey(byname, n)) && continue
+        push!(seen, n)
+        v = byname[n]
+        v.kind === :parameter && push!(out, n)
+        v.kind in (:constant, :aux) && foreach(p -> _parameters_of(p.rhs, byname, out, seen), v.parts)
+    end
+    return out
+end
+
 function _deps(v::Var; initial = false)
     out = Symbol[]
     parts = v.kind === :stock ? Part[] : (initial && v.init !== nothing ? [v.init] : v.parts)
@@ -269,13 +286,20 @@ function _toposort(nodes, deps)
     return order
 end
 _nodename(v::Var) = string(v.name)
+_nodename(x::Tuple) = x[1] === :stock ? string(x[2].name, "(t₀)") : x[2] isa Var ? string(x[2].name) :
+                      string("operator ", x[2])
 _nodename(x) = string(x)
 
 # --- stateful operators ---------------------------------------------------------
 
 # The value of an expression when the model is built: parameters, constants,
 # auxiliaries that depend only on them and on time (at t₀), Julia values.
-function _static_value(x, byname, p0, env, inputs, t0, src)
+function _static_value(x, byname, p0, env, inputs, t0, dt, src)
+    # the usual cases, without compiling anything: a number, a parameter, a constant
+    x isa Number && return x
+    if x isa VarRef && byname[x.name].kind in (:parameter, :constant)
+        return getfield(p0, byname[x.name].id)
+    end
     function sub(x)
         x isa VarRef || return x isa Expr ? Expr(x.head, map(sub, x.args)...) :
                               x isa EnvRef ? QuoteNode(env[x.key]) :
@@ -287,11 +311,11 @@ function _static_value(x, byname, p0, env, inputs, t0, src)
             error("$(_where(src)): `$(v.name)` must be known when the model is built")
         return sub(v.parts[1].rhs)
     end
-    return Core.eval(@__MODULE__, :(let p = (; t0 = $t0); $(sub(x)); end))
+    return Core.eval(@__MODULE__, :(let p = (; t0 = $t0, dt = $dt); $(sub(x)); end))
 end
 
 function _make_operator(c::OperatorCall, byname, p0, env, inputs, t0, dt)
-    sv(x) = _static_value(x, byname, p0, env, inputs, t0, c.source)
+    sv(x) = _static_value(x, byname, p0, env, inputs, t0, dt, c.source)
     k = c.kind
     k === :smooth && return Smooth(Int(sv(get(c.kwargs, :order, 1))))
     k === :delay && return MaterialDelay(Int(sv(get(c.kwargs, :order, 1))))
