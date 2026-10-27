@@ -27,3 +27,25 @@ jobs:
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
+
+  # The oldest versions the compat bounds in Project.toml allow
+  downgrade:
+    name: Oldest dependencies (Julia 1.10)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.10'
+      - uses: julia-actions/julia-downgrade-compat@v2
+        with:
+          mode: deps
+          julia_version: '1.10'
+          skip: Libdl, LinearAlgebra, Random, Test
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1
