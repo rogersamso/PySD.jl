@@ -11,6 +11,7 @@ arrays = @equations begin
         m[a, a1] = [0.1 0.2 0.0; 0.0 0.1 0.3; 0.2 0.0 0.1], [unit = NoUnits]
         w[b] = [1.0, 2.0], [unit = NoUnits]
         v[a] = [1.0, 2.0, 3.0], [unit = NoUnits]
+        rate = 0.1, [unit = u"s^-1"]
         by_year[years, a] = [1 2 3; 4 5 6; 7 8 9], [unit = NoUnits]
     end
     @variables begin
@@ -21,7 +22,7 @@ arrays = @equations begin
         inverse(t)[a1, a], [unit = NoUnits]
         product(t)[a1], [unit = NoUnits, description = "a matrix times a vector"]
         shifted(t)[a], [unit = NoUnits]
-        year(t), [unit = NoUnits]
+        year(t), [unit = u"s", description = "the year, as the time's labels"]
         pick(t), [unit = NoUnits, description = "a selection that changes with time"]
         part(t)[a], [unit = NoUnits]
         notx(t)[a], [unit = NoUnits]
@@ -31,7 +32,7 @@ arrays = @equations begin
 
     ∂t(s) ~ flow                                   # laid out from (b, a) to (a, b)
     s(t₀) ~ 1
-    flow ~ w .* v ./ 10
+    flow ~ w .* v .* rate
     leontief ~ inv(I - m)
     ia ~ I - m
     inverse ~ inv(ia)

@@ -36,13 +36,23 @@ function _runparams(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;)
 end
 
 """
-    run_model(model; params = (;), inputs = (;))
+    run_model(model; params = (;), inputs = (;), check_units = false)
 
 Run `model` from t₀ to t_final with Euler steps of Δt, as Vensim, and save
 every `saveat`.  `params` changes parameters by name (`(; τ = 5)`), `inputs`
-input sheets (`(; scen_w = excel(…))`).
+input sheets (`(; scen_w = excel(…))`).  `check_units = true` checks the
+units first ([`check_units`](@ref)) and stops if they don't add up;
+`:warn` prints the issues and runs anyway.
 """
-function run_model(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;))
+function run_model(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;),
+                   check_units::Union{Bool,Symbol} = false)
+    if check_units !== false
+        issues = PySD.check_units(m)
+        if !isempty(issues)
+            msg = "units don't add up in $(length(issues)) equations:\n" * join(string.(issues), "\n")
+            check_units === :warn ? @warn(msg) : error(msg)
+        end
+    end
     p = _runparams(m; params, inputs)
     u = m.init(p)
     du = similar(u)

@@ -138,7 +138,7 @@ end
     M = DimArray([0.1 0.2 0.0; 0.0 0.1 0.3; 0.2 0.0 0.1], (a, a1))
     v = DimArray([1.0, 2.0, 3.0], a)
     w = DimArray([1.0, 2.0], b)
-    flow = broadcast_dims(*, w, v) ./ 10                       # (b, a)
+    flow = broadcast_dims(*, w, v) .* 0.1                      # (b, a)
     @test r[:flow][end] == flow
     # the stock grows by the flow, laid out in its own order (a, b)
     @test r[:s][end] ≈ 1 .+ 2 .* permutedims(flow, (a, b))
@@ -188,4 +188,26 @@ end
     @test parent(py[:sum_first][end]) == [pysd_sum_seq(M[:, c]) for c in 1:200]
     @test py[:total][end] == pysd_sum(x0 .* 2)
     @test parent(py[:inverse_once]) == PySD._numpy_inv([2.0 0.3 0.1; 0.2 3.0 0.4; 0.1 0.5 4.0])
+end
+
+@testset "DSL: check_units" begin
+    m = _dsl("units")
+    issues = check_units(m)
+    wrong = sort(unique(i.name for i in issues))
+    @test wrong == [:wrong_choice, :wrong_energy, :wrong_growth, :wrong_smoothed, :wrong_total]
+    msg(name) = only(i.message for i in issues if i.name === name)
+    @test occursin("needs a conversion factor", msg(:wrong_total))
+    @test occursin("∂t(wrong_energy) is in EJ", msg(:wrong_energy))
+    @test occursin("exp of a value in yr", msg(:wrong_growth))
+    @test occursin("not a time", msg(:wrong_smoothed))
+    @test occursin("branches of ifelse", msg(:wrong_choice))
+    @test check_units(m) === issues                                  # kept per built model
+    @test_throws ErrorException run_model(m; check_units = true)
+    @test (@test_logs (:warn,) match_mode = :any run_model(m; check_units = :warn)) isa Results
+    # the test models: units that add up
+    @test isempty(check_units(_dsl("teacup")))
+    @test isempty(check_units(_dsl("arrays")))
+    mod = _module()
+    Base.include(mod, joinpath(@__DIR__, "dsl", "beer_game.jl"))
+    @test isempty(check_units(mod.beer_game()))
 end
