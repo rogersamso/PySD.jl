@@ -9,15 +9,56 @@
 
 const _Dims = Tuple
 
-_dname(d) = DimensionalData.name(d)
-_labels(d) = collect(parent(DimensionalData.lookup(d)))
-_samedim(a, b) = _dname(a) === _dname(b) && _labels(a) == _labels(b)
-_dimstr(ds) = "(" * join(map(string ∘ _dname, ds), ", ") * ")"
+# Each dimension is a type of its own (Dim{:name}), and so is each tuple of
+# them.  The functions here take dimensions unspecialized (@nospecialize) and
+# go through them in loops, not closures (a closure is a type of its own for
+# each tuple it holds): Julia compiles them once, not again for each
+# combination of dimensions of each model.
+_dname(@nospecialize(d)) = DimensionalData.name(d)
+_labels(@nospecialize(d)) = collect(parent(DimensionalData.lookup(d)))
+_samedim(@nospecialize(a), @nospecialize(b)) = _dname(a) === _dname(b) && _labels(a) == _labels(b)
 
-function _union(src, shapes...)
+# dimensions as a Vector{Any}, without compiling anything for the tuple's type
+function _dimvec(@nospecialize(ds))
     out = Any[]
-    for s in shapes, d in s
-        k = findfirst(e -> _dname(e) === _dname(d), out)
+    if ds isa Tuple
+        for i in 1:nfields(ds)
+            push!(out, getfield(ds, i))
+        end
+    else
+        append!(out, ds)
+    end
+    return out
+end
+
+function _findname(name::Symbol, ds::Vector{Any})
+    for i in eachindex(ds)
+        _dname(ds[i]) === name && return i
+    end
+    return nothing
+end
+_hasname(name::Symbol, @nospecialize(ds)) = _findname(name, _dimvec(ds)) !== nothing
+
+function _without(@nospecialize(ds), name::Symbol)
+    out = Any[]
+    for d in _dimvec(ds)
+        _dname(d) === name || push!(out, d)
+    end
+    return Tuple(out)
+end
+
+function _dimstr(@nospecialize(ds))
+    names = String[]
+    for d in _dimvec(ds)
+        push!(names, string(_dname(d)))
+    end
+    return "(" * join(names, ", ") * ")"
+end
+
+function _union(src, @nospecialize(shapes...))
+    out = Any[]
+    for s in shapes, d in _dimvec(s)
+        k = _findname(_dname(d), out)
         if k === nothing
             push!(out, d)
         elseif !_samedim(out[k], d)
@@ -41,7 +82,7 @@ end
 Lowering(byname, env; numerics = :julia) =
     Lowering(byname, env, Pair{Symbol,Any}[], Any[], LineNumberNode(0), Any[], numerics, Dict{Any,Any}())
 
-function _buffer!(L::Lowering, dims)
+function _buffer!(L::Lowering, @nospecialize(dims))
     name = Symbol("w", length(L.buffers) + 1)
     push!(L.buffers, name => dims)
     return name
@@ -58,7 +99,7 @@ _is_static(x) = true
 function _static_eval(x, L::Lowering)
     sub(y) = y isa EnvRef ? QuoteNode(getfield(L.env, y.key)) :
              y isa Expr ? Expr(y.head, map(sub, y.args)...) : y
-    return Core.eval(@__MODULE__, sub(x))
+    return _in_once(sub(x))
 end
 
 const _ELEMENTWISE = (:+, :-, :*, :/, :^)
@@ -84,7 +125,7 @@ function _shape(x, L::Lowering)
             return _union(L.src, (_shape(a, L) for a in args[2:end])...)
         elseif haskey(_REDUCTIONS, f)
             d = _static_eval(args[2], L)
-            return Tuple(e for e in _shape(args[1], L) if _dname(e) !== _dname(d))
+            return _without(_shape(args[1], L), _dname(d))
         elseif f === DimensionalData.set
             return _renamed(_shape(args[1], L), _static_eval.(args[2:end], Ref(L)))
         elseif f === previous
@@ -92,16 +133,17 @@ function _shape(x, L::Lowering)
         elseif f === LinearAlgebra.inv
             s = _shape(args[1], L)
             length(s) == 2 || error("$(_where(L.src)): inv of an array of $(length(s)) dimensions")
-            return reverse(s)
+            return Tuple(reverse(_dimvec(s)))
         elseif f in (:+, :-) && length(args) == 2 && (_isI(args[1]) || _isI(args[2]))
             return _shape(_isI(args[1]) ? args[2] : args[1], L)
         elseif f === :* && length(args) == 2
             a, b = _shape(args[1], L), _shape(args[2], L)
             (isempty(a) || isempty(b)) && return _union(L.src, a, b)
-            _dname(a[end]) === _dname(b[1]) ||
+            _dname(last(_dimvec(a))) === _dname(first(_dimvec(b))) ||
                 error("$(_where(L.src)): a matrix product needs the last dimension of one to be the first of the other " *
                       "($(_dimstr(a)) * $(_dimstr(b))); use .* element by element")
-            return (a[1:end-1]..., b[2:end]...)
+            av, bv = _dimvec(a), _dimvec(b)
+            return Tuple([av[1:end-1]; bv[2:end]])
         elseif f in _ELEMENTWISE || f === :ifelse || f === ifelse
             shapes = [_shape(a, L) for a in args]
             f in (:/, :^) && length(args) == 2 && !isempty(shapes[2]) &&
@@ -125,29 +167,34 @@ end
 
 # set(x, :a => :b) renames a dimension; set(x, :a => Dim{:b}(labels)) also gives
 # it new labels, position by position (Vensim's subscript mappings)
-function _renamed(s, pairs)
-    new = Dict(Symbol(first(p)) => last(p) for p in pairs)
-    return Tuple(map(s) do d
-        haskey(new, _dname(d)) || return d
+function _renamed(@nospecialize(s), pairs)
+    new = Dict{Symbol,Any}(Symbol(first(p)) => last(p) for p in pairs)
+    out = Any[]
+    for d in _dimvec(s)
+        if !haskey(new, _dname(d))
+            push!(out, d)
+            continue
+        end
         n = new[_dname(d)]
-        n isa Symbol && return Dim{n}(_labels(d))
+        n isa Symbol && (push!(out, Dim{n}(_labels(d))); continue)
         length(_labels(n)) == length(_labels(d)) ||
             error("set: $(length(_labels(n))) labels for a dimension of $(length(_labels(d)))")
-        return n
-    end)
+        push!(out, n)
+    end
+    return Tuple(out)
 end
 
 # x[d = sel, …]: the indices into x, its dimensions after the selection, and
 # whether the indices are known when the model is built
 function _selection(x::Expr, L::Lowering)
     base = x.args[1]
-    s = _shape(base, L)
+    s = _dimvec(_shape(base, L))
     isempty(s) && error("$(_where(L.src)): selecting from `$base`, which has no dimensions")
     _, kw = _split_kwargs(x.args[2:end])
     idx = Any[Colon() for _ in s]
-    dims = Any[d for d in s]
+    dims = copy(s)
     for (name, sel) in kw
-        k = findfirst(d -> _dname(d) === name, s)
+        k = _findname(name, s)
         k === nothing && error("$(_where(L.src)): `$base` has no dimension `$name`")
         labels = _labels(s[k])
         if _is_static(sel)
@@ -191,19 +238,20 @@ _pos(labels, v) = (i = findfirst(isequal(v), labels); i === nothing ? error("no 
 # --- code -----------------------------------------------------------------------
 
 # an array with dimensions `S`, laid out to broadcast in the dimensions `T`
-function _layout(code, S, T, L::Lowering)
+function _layout(code, @nospecialize(S), @nospecialize(T), L::Lowering)
     isempty(S) && return code
-    pos = map(S) do d
-        k = findfirst(e -> _dname(e) === _dname(d), T)
+    Sv, Tv = _dimvec(S), _dimvec(T)
+    pos = Int[]
+    for d in Sv
+        k = _findname(_dname(d), Tv)
         k === nothing && error("$(_where(L.src)): dimension `$(_dname(d))` is not in $(_dimstr(T))")
-        _samedim(d, T[k]) || error("$(_where(L.src)): dimension `$(_dname(d))` with different elements " *
-                                   "(two different subsets? use a loop over the pairs)")
-        k
+        _samedim(d, Tv[k]) || error("$(_where(L.src)): dimension `$(_dname(d))` with different elements " *
+                                    "(two different subsets? use a loop over the pairs)")
+        push!(pos, k)
     end
-    perm = Tuple(sortperm(collect(pos)))
-    shp = Tuple((k = findfirst(e -> _dname(e) === _dname(d), S); k === nothing ? 1 : length(_labels(S[k])))
-                for d in T)
-    (perm == Tuple(1:length(S)) && length(S) == length(T)) && return code
+    perm = Tuple(sortperm(pos))
+    shp = Tuple(Int[(k = _findname(_dname(d), Sv); k === nothing ? 1 : length(_labels(Sv[k]))) for d in Tv])
+    (perm == Tuple(1:length(Sv)) && length(Sv) == length(Tv)) && return code
     return :($_lay($code, $(Val(perm)), $(Val(shp))))
 end
 
@@ -219,8 +267,16 @@ _reshape(a, shp) = reshape(a, shp)
 
 _dotcall(f, args) = Expr(:., f, Expr(:tuple, args...))
 
+function _emit_all(args, @nospecialize(T), L)
+    out = Any[]
+    for a in args
+        push!(out, _emit(a, T, L))
+    end
+    return out
+end
+
 # code for `x`, laid out to broadcast in dimensions `T` (`T = ()`: a number)
-function _emit(x, T, L::Lowering)
+function _emit(x, @nospecialize(T), L::Lowering)
     if x isa VarRef
         v = L.byname[x.name]
         return _layout(v.id, v.dims, T, L)
@@ -230,12 +286,12 @@ function _emit(x, T, L::Lowering)
     x isa InputRef && return :(p.inputs.$(x.name))
     x isa Expr || return x
     x.head === :ref && return _emit_selection(x, T, L)
-    x.head === :call || return Expr(x.head, (_emit(a, T, L) for a in x.args)...)
+    x.head === :call || return Expr(x.head, _emit_all(x.args, T, L)...)
     f = _fn(x.args[1])
     args = x.args[2:end]
     shape = _shape(x, L)
     if f === _bc
-        return _dotcall(_python(_emit(args[1], (), L), L.numerics), [_emit(a, T, L) for a in args[2:end]])
+        return _dotcall(_python(_emit(args[1], (), L), L.numerics), _emit_all(args[2:end], T, L))
     elseif f === DimensionalData.set
         return _emit_renamed(x, T, L)
     elseif haskey(_REDUCTIONS, f) || f === previous || f === LinearAlgebra.inv ||
@@ -244,15 +300,15 @@ function _emit(x, T, L::Lowering)
         return _emit_materialized(x, shape, T, L)
     elseif f isa VarRef && !isempty(L.byname[f.name].dims)
         v = L.byname[f.name]                     # its series, broadcast as any array
-        return _dotcall(_callf, [_layout(:($(v.id).series), v.dims, T, L); [_emit(a, T, L) for a in args]])
+        return _dotcall(_callf, [_layout(:($(v.id).series), v.dims, T, L); _emit_all(args, T, L)])
     elseif !isempty(shape) && (f in _ELEMENTWISE || f === :ifelse || f === ifelse || x.args[1] isa VarRef)
         fcode = f in _ELEMENTWISE ? f : f === ifelse ? :ifelse : _emit(x.args[1], (), L)
-        return _dotcall(_python(fcode, L.numerics), [_emit(a, T, L) for a in args])
+        return _dotcall(_python(fcode, L.numerics), _emit_all(args, T, L))
     end
     return Expr(:call, _python(_emit(x.args[1], (), L), L.numerics), (_emit(a, (), L) for a in args)...)
 end
 
-function _emit_selection(x, T, L)
+function _emit_selection(x, @nospecialize(T), L)
     idx, dims = _selection(x, L)
     base = x.args[1]
     bcode = base isa VarRef ? L.byname[base.name].id : _materialize(base, _shape(base, L), L)
@@ -263,7 +319,7 @@ function _emit_selection(x, T, L)
     return _layout(:(view($bcode, $(icode...))), dims, T, L)
 end
 
-function _emit_renamed(x, T, L)
+function _emit_renamed(x, @nospecialize(T), L)
     # only the names of the dimensions change: lay out the original under its new names
     inner = x.args[2]
     S0 = _shape(inner, L)
@@ -273,7 +329,7 @@ function _emit_renamed(x, T, L)
 end
 
 # compute `x` (dimensions `S`) into a buffer of its own, before the statement
-function _materialize(x, S, L)
+function _materialize(x, @nospecialize(S), L)
     isempty(S) && return _emit(x, (), L)
     w = _buffer!(L, S)
     push!(L.pre, :($w = p.work.$w))
@@ -282,19 +338,19 @@ function _materialize(x, S, L)
     if haskey(_REDUCTIONS, f)
         Sx = _shape(args[1], L)
         d = _static_eval(args[2], L)
-        k = findfirst(e -> _dname(e) === _dname(d), Sx)
+        k = _findname(_dname(d), _dimvec(Sx))
         k === nothing && error("$(_where(L.src)): no dimension `$(_dname(d))` to reduce over in $(_dimstr(Sx))")
         src = _source(args[1], Sx, L)
         if f === sum_over && L.numerics === :python
             push!(L.pre, :($_sum_python!($w, $src, $(Val(k)))))
         else
-            keep = Tuple(i == k ? 1 : length(_labels(e)) for (i, e) in enumerate(Sx))
+            keep = Tuple(Int[i == k ? 1 : length(_labels(e)) for (i, e) in enumerate(_dimvec(Sx))])
             push!(L.pre, :($(_REDUCTIONS[f])($_reshape($w, $keep), $src)))
         end
     elseif f === previous
         Sx = _shape(args[1], L)
         d = _static_eval(args[2], L)
-        k = findfirst(e -> _dname(e) === _dname(d), Sx)
+        k = _findname(_dname(d), _dimvec(Sx))
         push!(L.pre, :($_previous!($w, $(_source(args[1], Sx, L)), $(Val(k)))))
     elseif f === LinearAlgebra.inv
         Sx = _shape(args[1], L)
@@ -316,7 +372,7 @@ function _materialize(x, S, L)
 end
 
 # `x` laid out in exactly the dimensions `S`, in a buffer if it isn't already
-function _materialize_as(x, S, L)
+function _materialize_as(x, @nospecialize(S), L)
     x isa VarRef && L.byname[x.name].dims == S && return L.byname[x.name].id
     w = _buffer!(L, S)
     push!(L.pre, :($w = p.work.$w))
@@ -325,10 +381,10 @@ function _materialize_as(x, S, L)
 end
 
 # an array to read from: a name or a selection as it is, anything else computed first
-_source(x::VarRef, S, L) = L.byname[x.name].id
-_source(x, S, L) = x isa Expr && x.head === :ref ? _emit_selection(x, S, L) : _materialize(x, S, L)
+_source(x::VarRef, @nospecialize(S), L) = L.byname[x.name].id
+_source(x, @nospecialize(S), L) = x isa Expr && x.head === :ref ? _emit_selection(x, S, L) : _materialize(x, S, L)
 
-_emit_materialized(x, S, T, L) = isempty(S) ? _reduce_scalar(x, L) : _layout(_materialize(x, S, L), S, T, L)
+_emit_materialized(x, @nospecialize(S), @nospecialize(T), L) = isempty(S) ? _reduce_scalar(x, L) : _layout(_materialize(x, S, L), S, T, L)
 
 # a reduction over the only dimension of an array: a number
 function _reduce_scalar(x, L)
@@ -354,10 +410,10 @@ function _add_diagonal!(w, c)
 end
 
 # `target .= rhs` for a variable (or a part of it) with dimensions `T`
-function _store(target, rhs, T, L::Lowering)
+function _store(target, rhs, @nospecialize(T), L::Lowering)
     S = _shape(rhs, L)
-    for d in S
-        any(e -> _dname(e) === _dname(d), T) ||
+    for d in _dimvec(S)
+        _hasname(_dname(d), T) ||
             error("$(_where(L.src)): the equation has dimension `$(_dname(d))`, which its variable $(_dimstr(T)) hasn't")
     end
     code = _emit(rhs, T, L)

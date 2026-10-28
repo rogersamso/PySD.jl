@@ -42,6 +42,26 @@ function _runparams(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;)
     return (; par, env = m.env, inputs = inp, t0 = m.t0, dt = m.dt, work)
 end
 
+# Euler steps, as Vensim
+function _simulate(init, rhs!, observe, p, m::Model)
+    u = init(p)
+    du = similar(u)
+    nsteps = round(Int, (m.tf - m.t0) / m.dt)
+    every = max(1, round(Int, m.saveat / m.dt))
+    times, saved = Float64[], Vector{Any}[]
+    for n in 0:nsteps
+        t = m.t0 + n * m.dt
+        if n % every == 0 || n == nsteps
+            push!(times, t)
+            push!(saved, observe(u, p, t))
+        end
+        n == nsteps && break
+        rhs!(du, u, p, t)
+        @. u += m.dt * du
+    end
+    return times, saved
+end
+
 """
     run_model(model; params = (;), inputs = (;), check_units = false)
 
@@ -61,20 +81,45 @@ function run_model(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;),
         end
     end
     p = _runparams(m; params, inputs)
-    u = m.init(p)
-    du = similar(u)
-    nsteps = round(Int, (m.tf - m.t0) / m.dt)
-    every = max(1, round(Int, m.saveat / m.dt))
-    times, saved = Float64[], Vector{Any}[]
-    for n in 0:nsteps
-        t = m.t0 + n * m.dt
-        if n % every == 0 || n == nsteps
-            push!(times, t)
-            push!(saved, m.observe(u, p, t))
-        end
-        n == nsteps && break
-        m.rhs!(du, u, p, t)
-        @. u += m.dt * du
-    end
+    times, saved = Base.invokelatest(_simulate, m.init.f, m.rhs!.f, m.observe.f, p, m)
     return Results(times, saved, Dict(v.name => i for (i, v) in enumerate(_shown(m.vars))), p.par, m)
+end
+
+"""
+    @precompile_model name = expr
+
+In a package: `const name = expr`, a [`Model`](@ref), built and run once while
+Julia precompiles the package, so that the package saves the model with all
+that building and running it compiled.  Later sessions load it ready to run:
+`using MyModel; run_model(MyModel.name)`.
+
+```julia
+module MyModel
+using PySD
+@precompile_model model = include("../mymodel.jl")
+end
+```
+
+Julia precompiles the package again when one of its files, or an Excel sheet
+the model reads, changes.
+"""
+macro precompile_model(ex)
+    (ex isa Expr && ex.head === :(=) && ex.args[1] isa Symbol) ||
+        throw(ArgumentError("use @precompile_model name = Model(…)"))
+    name, rhs = ex.args
+    built = gensym(:built)
+    # (all that's compiled inside @compile_workload is saved; a const can't be
+    # assigned there, so the model built there is assigned after, or built then
+    # if workloads are off)
+    workload = Expr(:macrocall, GlobalRef(PrecompileTools, Symbol("@compile_workload")), __source__,
+                    quote
+                        $built[] = $rhs
+                        $run_model($built[])
+                    end)
+    return esc(quote
+        const $name = let $built = Ref{Any}(nothing)
+            $workload
+            $built[] === nothing ? $rhs : $built[]
+        end
+    end)
 end

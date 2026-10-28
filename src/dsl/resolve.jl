@@ -103,7 +103,7 @@ function _static(r::Resolver, i, ex)
             error("`$s` in `$ex` must be a Julia value")
     end
     builtins = [:($s = $(QuoteNode(_BUILTINS[s]))) for s in used if !haskey(env, s) && haskey(_BUILTINS, s)]
-    return Core.eval(@__MODULE__, Expr(:let, Expr(:block, binds..., builtins...), ex))
+    return _in_once(Expr(:let, Expr(:block, binds..., builtins...), ex))
 end
 
 resolve(r::Resolver, i, x, src) = _resolve(r, i, x, Symbol[], src)

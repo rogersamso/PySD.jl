@@ -12,7 +12,11 @@ struct ExcelSheet
     path::String
     sheet::String
 end
-excel(path::AbstractString, sheet::AbstractString) = ExcelSheet(abspath(path), String(sheet))
+function excel(path::AbstractString, sheet::AbstractString)
+    # a model precompiled in a package is built again when one of its sheets changes
+    ccall(:jl_generating_output, Cint, ()) == 1 && isfile(path) && Base.include_dependency(abspath(path))
+    return ExcelSheet(abspath(path), String(sheet))
+end
 Base.show(io::IO, s::ExcelSheet) = print(io, "excel(", repr(basename(s.path)), ", ", repr(s.sheet), ")")
 
 """

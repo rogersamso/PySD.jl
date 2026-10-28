@@ -4,17 +4,61 @@
 # are computed once, with DimArrays (params); the code that runs at every step
 # works on plain arrays (lower.jl), with buffers in `p.work`.
 
-_compile(ex) = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, ex)
+# Each model keeps its code in a module of its own, inside the module its
+# equations are written in: the functions the model compiles (their cache, for
+# RuntimeGeneratedFunctions), its equations, and the code it runs once.  A
+# package that builds a model when it's precompiled then keeps all of it, and
+# loads it ready to run.  (Julia keeps only what a package defines in itself.)
+# Model builds a model inside `_within(M) do … end`.
+const _MODEL_MODULE = :pysd_model_module
+const _MODELS = Threads.Atomic{Int}(0)
 
-# Parameters and constants are computed once per run: compiling their code
-# (a statement per name, thousands for a large model) costs much more than
-# running it, so it runs with as little compiling as Julia allows, in a module
-# of its own (the option is a module's), with PySD's names.
+function _model_module(home::Module)
+    name = Symbol("#PySD model ", Threads.atomic_add!(_MODELS, 1) + 1)
+    code = :(module $name
+        import PySD
+        const _EQUATIONS = Dict{UInt64,Tuple{Tuple,Expr}}()
+        __init__() = PySD._register!(_EQUATIONS)        # when a package loads the model
+        # Parameters and constants are computed once per run: compiling their
+        # code (a statement per name, thousands for a large model) costs much
+        # more than running it, so it runs with as little compiling as Julia
+        # allows, in a module of its own (the option is a module's).
+        module Once
+        Base.Experimental.@compiler_options compile=min optimize=0 infer=false
+        end
+    end)
+    M = Core.eval(home, code)
+    RuntimeGeneratedFunctions.init(M)
+    return M
+end
+
+_within(f, M::Module) = task_local_storage(f, _MODEL_MODULE, M)
+_current() = get(task_local_storage(), _MODEL_MODULE, @__MODULE__)
+
+# (the model's module is also where names are looked up: RuntimeGeneratedFunctions
+# compiles there, and Julia 1.12 can't see a module made after the one it
+# compiles in; the code's names are PySD's, as GlobalRefs)
+_compile(ex) = (M = _current(); Compiled(RuntimeGeneratedFunction(M, M, _globalrefs(ex))))
+
+# A model's functions are defined while it is built, and Julia calls a function
+# only from code that started after it was defined: from the code that built
+# the model (a test, a script in one block) they would be too new.  So, called
+# directly, each goes through invokelatest; run_model goes through it once and
+# calls the functions themselves at every step.
+struct Compiled{F} <: Function
+    f::F
+end
+(c::Compiled)(args...) = Base.invokelatest(c.f, args...)
+
+# outside a model (a test of the generated code): PySD's own
 module Once
 Base.Experimental.@compiler_options compile=min optimize=0 infer=false
 end
 
-function _in_once(ex)
+_in_once(ex) = Core.eval(_current().Once, _globalrefs(ex))
+
+# the names in `ex` that are PySD's (all but its local variables), as GlobalRefs
+function _globalrefs(ex)
     locals = Set{Symbol}()
     function bound!(x)                       # assigned, function arguments, loop variables
         x isa Expr || return
@@ -30,8 +74,8 @@ function _in_once(ex)
     bound!(ex)
     ref(x) = x isa Symbol && !(x in locals) && isdefined(@__MODULE__, x) ? GlobalRef(@__MODULE__, x) :
              x isa Expr && x.head !== :quote && x.head !== :. ? Expr(x.head, map(ref, x.args)...) :
-             x isa Expr && x.head === :. ? Expr(:., ref(x.args[1]), x.args[2:end]...) : x
-    return Core.eval(Once, ref(ex))
+             x isa Expr && x.head === :. ? Expr(:., ref(x.args[1]), (a isa QuoteNode ? a : ref(a) for a in x.args[2:end])...) : x
+    return ref(ex)
 end
 
 # --- parameters and constants: computed once ------------------------------------
@@ -103,7 +147,7 @@ function _block!(L::Lowering, src, build)
     return Expr(:block, L.pre..., code)
 end
 
-_size(dims) = Tuple(length(_labels(d)) for d in dims)
+_size(@nospecialize(dims)) = Tuple(Int[length(_labels(d)) for d in _dimvec(dims)])
 
 # an operator's hidden stocks: a vector, or (stages × elements) for arrays
 _opstates(o::Operator, u) = isempty(o.dims) ? :(view($u, $(o.range))) :
@@ -112,12 +156,13 @@ _opstates(o::Operator, u) = isempty(o.dims) ? :(view($u, $(o.range))) :
 # the target of an equation for a part: an element or a view
 function _part_target(target, v::Var, p::Part, L::Lowering)
     isempty(p.sels) && return target, v.dims
-    idx = Any[Colon() for _ in v.dims]
-    dims = Any[d for d in v.dims]
+    vdims = _dimvec(v.dims)
+    idx = Any[Colon() for _ in vdims]
+    dims = copy(vdims)
     for (name, sel) in p.sels
-        k = findfirst(d -> _dname(d) === name, v.dims)
+        k = _findname(name, vdims)
         k === nothing && error("$(_where(p.source)): `$(v.name)` has no dimension `$name`")
-        labels = _labels(v.dims[k])
+        labels = _labels(vdims[k])
         i = _select_indices(labels, sel, L)
         idx[k] = i
         dims[k] = i isa Integer ? nothing : Dim{name}(labels[i])
@@ -287,8 +332,12 @@ function _equation!(args::Tuple, body::Expr)
         old = get!(_EQUATIONS, id, (args, body))
         old == (args, body) || error("two equations with the same hash")
     end
+    M = _current()
+    M === (@__MODULE__) || (M._EQUATIONS[id] = (args, body))   # kept with the model
     return id
 end
+
+_register!(eqs) = lock(() -> merge!(_EQUATIONS, eqs), _EQUATIONS_LOCK)
 
 function _expand(id)
     args, body = lock(() -> _EQUATIONS[id], _EQUATIONS_LOCK)

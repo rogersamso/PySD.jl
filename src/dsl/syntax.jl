@@ -27,13 +27,16 @@ end
 
 What `@equations` returns: declarations, equations and the Julia values they
 use.  A set with a name is a component; its names get the name as a prefix
-(`retailer.inventory`).
+(`retailer.inventory`).  `defined_in` is the module the set is written in: a
+model built from it keeps its compiled code there (so that a package can
+precompile it).
 """
 struct EquationSet
     name::Union{Nothing,Symbol}
     declarations::Vector{Declaration}
     equations::Vector{Equation}
     env::Dict{Symbol,Any}
+    defined_in::Module
 end
 
 Base.show(io::IO, s::EquationSet) =
@@ -73,12 +76,12 @@ macro equations(args...)
     block = args[end]
     (block isa Expr && block.head === :block) ||
         throw(ArgumentError("@equations needs a begin … end block"))
-    return esc(_equations_code(name, block, __source__))
+    return esc(_equations_code(name, block, __source__, __module__))
 end
 
 const _RESERVED = (:t, :t₀, :Δt, :∂t, :end, :begin, :nothing, :true, :false)
 
-function _equations_code(name, block, source)
+function _equations_code(name, block, source, mod)
     decls, eqs, env = gensym(:declarations), gensym(:equations), gensym(:env)
     body = Any[]
     declared = Symbol[]
@@ -90,7 +93,7 @@ function _equations_code(name, block, source)
         let $decls = $Declaration[], $eqs = $Equation[], $env = Dict{Symbol,Any}()
             $(body...)
             $(captures...)
-            $EquationSet($(name === nothing ? nothing : name), $decls, $eqs, $env)
+            $EquationSet($(name === nothing ? nothing : name), $decls, $eqs, $env, $mod)
         end
     end
 end
@@ -262,7 +265,9 @@ _unit_value(x::Number) = x
 _as_unit(x::Unitful.Quantity) = isone(Unitful.ustrip(x)) ? Unitful.unit(x) : x
 _as_unit(x) = x
 function _unit_value(x::Symbol)
-    u = Unitful.uparse(string(x); unit_context = unique!([Unitful; Unitful.unitmodules]))
+    # (lookup_units, not uparse: uparse evaluates in Unitful, which a model
+    # precompiled as a package can't do)
+    u = Unitful.lookup_units(unique!([Unitful; Unitful.unitmodules]), x)
     return u isa Unitful.AffineUnits ? Unitful.absoluteunit(u) : u
 end
 function _unit_value(x::Expr)

@@ -65,10 +65,17 @@ Base.show(io::IO, m::Model) = print(io, "Model(", length(m.vars), " names, ",
 _flatten_sets(x::EquationSet) = [x]
 _flatten_sets(x::AbstractVector) = reduce(vcat, (_flatten_sets(y) for y in x); init = EquationSet[])
 
-function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple = (;),
-               numerics::Symbol = :julia)
-    numerics in (:julia, :python) || throw(ArgumentError("numerics is :julia or :python, not $(repr(numerics))"))
+function Model(sets...; kwargs...)
     sets = _flatten_sets(collect(Any, sets))
+    isempty(sets) && throw(ArgumentError("Model needs at least one set of @equations"))
+    M = _model_module(first(sets).defined_in)
+    # (in the world where the model's module exists)
+    return Base.invokelatest(_within, () -> _model(sets; kwargs...), M)
+end
+
+function _model(sets; time, time_unit, saveat = step(time), inputs::NamedTuple = (;),
+                numerics::Symbol = :julia)
+    numerics in (:julia, :python) || throw(ArgumentError("numerics is :julia or :python, not $(repr(numerics))"))
     r = Resolver(sets, inputs)
     vars, byname = Var[], Dict{Symbol,Var}()
     for (full, (d, i)) in sort!(collect(r.decls); by = first)
@@ -107,7 +114,7 @@ function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple
     k = 0
     for v in vars
         v.kind === :stock || continue
-        len = isempty(v.dims) ? 1 : prod(length.(v.dims))
+        len = prod(_size(v.dims); init = 1)
         statevec[v.name] = (k + 1):(k + len)
         k += len
     end
@@ -122,7 +129,7 @@ function Model(sets...; time, time_unit, saveat = step(time), inputs::NamedTuple
         L.src = call.source
         dims = _union(call.source, (_shape(a, L) for a in [call.args; [v for (k, v) in call.kwargs if k === :init]])...)
         push!(L.opdims, dims)
-        n = nstates(op) * prod(length.(_labels.(dims)); init = 1)
+        n = nstates(op) * prod(_size(dims); init = 1)
         push!(ops, Operator(call, op, dims, (k + 1):(k + n)))
         k += n
     end
@@ -216,14 +223,17 @@ function _check_cover(v::Var, parts)
             error("$(_where(parts[end].source)): `$(v.name)` has no dimensions but several equations")
         return
     end
-    sz = Tuple(length.(v.dims))
-    count = zeros(Int, sz)
-    idx = DimArray(reshape(collect(1:prod(sz)), sz), v.dims)
+    # (plain positions, not a DimArray: compiled once for all dimensions)
+    vdims = _dimvec(v.dims)
+    count = zeros(Int, _size(v.dims)...)
     for p in parts
-        sel = isempty(p.sels) ? idx : getindex(idx; p.sels...)
-        for k in (sel isa Number ? (sel,) : sel)
-            count[k] += 1
+        idx = Any[Colon() for _ in vdims]
+        for (name, sel) in p.sels
+            k = _findname(name, vdims)
+            k === nothing && error("$(_where(p.source)): `$(v.name)` has no dimension `$name`")
+            idx[k] = _select_indices(_labels(vdims[k]), sel, (; src = p.source))
         end
+        view(count, idx...) .+= 1
     end
     any(>(1), count) && error("$(_where(parts[end].source)): equations for `$(v.name)` overlap")
     any(==(0), count) && error("$(_where(parts[end].source)): equations for `$(v.name)` don't cover all its elements")
@@ -294,28 +304,43 @@ _nodename(x) = string(x)
 
 # The value of an expression when the model is built: parameters, constants,
 # auxiliaries that depend only on them and on time (at t₀), Julia values.
-function _static_value(x, byname, p0, env, inputs, t0, dt, src)
-    # the usual cases, without compiling anything: a number, a parameter, a constant
-    x isa Number && return x
-    if x isa VarRef && byname[x.name].kind in (:parameter, :constant)
-        return getfield(p0, byname[x.name].id)
-    end
-    function sub(x)
-        x isa VarRef || return x isa Expr ? Expr(x.head, map(sub, x.args)...) :
-                              x isa EnvRef ? QuoteNode(env[x.key]) :
-                              x isa InputRef ? QuoteNode(inputs[x.name]) :
-                              x === :t ? t0 : x isa OpRef ? error("$(_where(src)): must be known when the model is built") : x
-        v = byname[x.name]
-        v.kind in (:parameter, :constant) && return QuoteNode(getfield(p0, v.id))
-        (v.kind === :aux && length(v.parts) == 1 && isempty(v.parts[1].sels)) ||
-            error("$(_where(src)): `$(v.name)` must be known when the model is built")
-        return sub(v.parts[1].rhs)
-    end
-    return Core.eval(@__MODULE__, :(let p = (; t0 = $t0, dt = $dt); $(sub(x)); end))
+# (What is known is held untyped, so this is compiled once for all models: as
+# a type parameter of a closure, the parameters' NamedTuple would make Julia
+# compile it again for each one.)
+struct Known
+    byname::Dict{Symbol,Var}
+    p0::Any
+    env::Any
+    inputs::Any
+    t0::Float64
+    dt::Float64
+    src::LineNumberNode
 end
 
-function _make_operator(c::OperatorCall, byname, p0, env, inputs, t0, dt)
-    sv(x) = _static_value(x, byname, p0, env, inputs, t0, dt, c.source)
+function _static_value(x, k::Known)
+    # the usual cases, without compiling anything: a number, a parameter, a constant
+    x isa Number && return x
+    if x isa VarRef && k.byname[x.name].kind in (:parameter, :constant)
+        return getfield(k.p0, k.byname[x.name].id)
+    end
+    return _in_once(:(let p = (; t0 = $(k.t0), dt = $(k.dt)); $(_known(x, k)); end))
+end
+
+function _known(x, k::Known)
+    x isa VarRef || return x isa Expr ? Expr(x.head, Any[_known(a, k) for a in x.args]...) :
+                          x isa EnvRef ? QuoteNode(k.env[x.key]) :
+                          x isa InputRef ? QuoteNode(k.inputs[x.name]) :
+                          x === :t ? k.t0 : x isa OpRef ? error("$(_where(k.src)): must be known when the model is built") : x
+    v = k.byname[x.name]
+    v.kind in (:parameter, :constant) && return QuoteNode(getfield(k.p0, v.id))
+    (v.kind === :aux && length(v.parts) == 1 && isempty(v.parts[1].sels)) ||
+        error("$(_where(k.src)): `$(v.name)` must be known when the model is built")
+    return _known(v.parts[1].rhs, k)
+end
+
+function _make_operator(c::OperatorCall, byname, @nospecialize(p0), @nospecialize(env), @nospecialize(inputs), t0, dt)
+    known = Known(byname, p0, env, inputs, t0, dt, c.source)
+    sv(x) = _static_value(x, known)
     k = c.kind
     k === :smooth && return Smooth(Int(sv(get(c.kwargs, :order, 1))))
     k === :delay && return MaterialDelay(Int(sv(get(c.kwargs, :order, 1))))

@@ -14,6 +14,7 @@ using DelimitedFiles: readdlm
 using DimensionalData
 using DimensionalData: AbstractDimArray, DimArray, broadcast_dims
 using RuntimeGeneratedFunctions
+import PrecompileTools
 import Unitful
 using Unitful: @u_str, NoUnits
 
@@ -77,7 +78,7 @@ export pysd_trunc, pysd_log_base, pysd_ln, pysd_sqrt, pysd_asin, pysd_acos,
 # found by @equations without being exported; new stateful operators extend
 # PySD.nstates, PySD.initial_states, PySD.rates! and PySD.output.
 export @equations, EquationSet, Model, run_model, Results, StatefulOperator, excel, check_units,
-       @u_str, NoUnits, PySDUnits
+       @precompile_model, @u_str, NoUnits, PySDUnits
 
 include("libm.jl")
 include("helpers.jl")

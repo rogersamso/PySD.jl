@@ -175,14 +175,15 @@ end
     m2 = Base.include_string(_module(), src)
     p = PySD._runparams(m2)
     u = m2.init(p); du = similar(u)
+    # (the step function itself, from the newest world: Julia's, after the model was built)
     allocs(f::F, du, u, p) where {F} = (f(du, u, p, 0.0); @allocated f(du, u, p, 0.0))
-    @test allocs(m2.rhs!, du, u, p) == 0
+    @test Base.invokelatest(allocs, m2.rhs!.f, du, u, p) == 0
     # operators of arrays: their hidden stocks element by element, nothing allocated either
     for name in ("subscripted_smooth", "subscripted_delays", "sample_if_true")
         m3 = _dsl(name)
         p = PySD._runparams(m3)
         u = m3.init(p); du = similar(u)
-        @test allocs(m3.rhs!, du, u, p) == 0
+        @test Base.invokelatest(allocs, m3.rhs!.f, du, u, p) == 0
     end
 end
 
@@ -237,4 +238,43 @@ end
                        ∂t(x) ~ k * x
                        x(t₀) ~ 1""")
     @test isempty(check_units(growth))
+end
+
+@testset "DSL: a model precompiled in a package" begin
+    # a package that builds the teacup model when it's precompiled; a second
+    # Julia session loads it built and compiled: no Model call in that session
+    dir = mktempdir()
+    pkg = joinpath(dir, "Cup")
+    mkpath(joinpath(pkg, "src"))
+    cp(joinpath(@__DIR__, "dsl", "teacup.jl"), joinpath(pkg, "teacup.jl"))
+    write(joinpath(pkg, "Project.toml"), """
+        name = "Cup"
+        uuid = "8c0c3e3a-6a64-4e0e-9a51-3f2c1b0d9e7f"
+        [deps]
+        PySD = "$(Base.PkgId(PySD).uuid)"
+        """)
+    write(joinpath(pkg, "src", "Cup.jl"), """
+        module Cup
+        using PySD
+        @precompile_model model = include("../teacup.jl")
+        end
+        """)
+    env = joinpath(dir, "env")
+    # (Julia sessions of their own, with Julia's usual load path, not the tests')
+    function julia(code)
+        cmd = addenv(`$(Base.julia_cmd()) --startup-file=no --project=$env -e $code`,
+                     "JULIA_LOAD_PATH" => "@:@stdlib", "JULIA_PROJECT" => nothing)
+        out = IOBuffer()
+        ok = success(pipeline(cmd; stdout = out, stderr = out))
+        text = String(take!(out))
+        ok || error("julia -e $code failed:\n$text")
+        return last(split(chomp(text), '\n'))
+    end
+    julia("using Pkg; Pkg.develop([PackageSpec(path = $(repr(pkgdir(PySD)))), PackageSpec(path = $(repr(pkg)))])")
+    check = "using Cup, PySD; print(PySD._MODELS[], \" \", run_model(Cup.model)[:teacup_temperature][end])"
+    built = julia(check)                  # precompiles Cup: builds the model there
+    loaded = julia(check)                 # loads it
+    expected = run_model(_dsl("teacup"))[:teacup_temperature][end]
+    @test loaded == "0 $expected"
+    @test endswith(built, " $expected")
 end
