@@ -265,9 +265,17 @@ _unit_value(x::Number) = x
 _as_unit(x::Unitful.Quantity) = isone(Unitful.ustrip(x)) ? Unitful.unit(x) : x
 _as_unit(x) = x
 function _unit_value(x::Symbol)
-    # (lookup_units, not uparse: uparse evaluates in Unitful, which a model
-    # precompiled as a package can't do)
-    u = Unitful.lookup_units(unique!([Unitful; Unitful.unitmodules]), x)
+    # (looked up in the registered unit modules, as Unitful's parser does, but
+    # without evaluating anything: a model precompiled in a package can't
+    # evaluate in Unitful; the last module registered first)
+    u = nothing
+    for m in reverse([Unitful; Unitful.unitmodules])
+        if isdefined(m, x) && getfield(m, x) isa Union{Number,Unitful.Units,Unitful.MixedUnits,Unitful.Dimensions}
+            u = getfield(m, x)
+            break
+        end
+    end
+    u === nothing && throw(ArgumentError("Symbol $x could not be found in unit modules $(unique([Unitful; Unitful.unitmodules]))"))
     return u isa Unitful.AffineUnits ? Unitful.absoluteunit(u) : u
 end
 function _unit_value(x::Expr)

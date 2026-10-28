@@ -28,7 +28,9 @@ function _model_module(home::Module)
         end
     end)
     M = Core.eval(home, code)
-    RuntimeGeneratedFunctions.init(M)
+    # (init calls the module's own eval, newer than this call: Julia 1.10 needs
+    # the newest world for it)
+    Base.invokelatest(RuntimeGeneratedFunctions.init, M)
     return M
 end
 
@@ -330,7 +332,10 @@ function _equation!(args::Tuple, body::Expr)
     id = hash((args, body))
     lock(_EQUATIONS_LOCK) do
         old = get!(_EQUATIONS, id, (args, body))
-        old == (args, body) || error("two equations with the same hash")
+        # the same code: equal, or written the same (values in it, such as
+        # dimensions, can hash by their contents but compare as objects)
+        isequal(old, (args, body)) || repr(old) == repr((args, body)) ||
+            error("two equations with the same hash")
     end
     M = _current()
     M === (@__MODULE__) || (M._EQUATIONS[id] = (args, body))   # kept with the model

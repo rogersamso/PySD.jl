@@ -48,7 +48,7 @@ Random = "1"
 RuntimeGeneratedFunctions = "0.5.27"
 Symbolics = "6"
 Test = "1"
-Unitful = "1"
+Unitful = "1.1"
 XLSX = "0.11"
 
 [extras]
