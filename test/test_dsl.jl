@@ -274,6 +274,26 @@ end
     @test res[:s][1] === res[:c] === PySD.pysd_sum(permutedims(vals))
 end
 
+@testset "DSL: constants of arrays and numbers in other dimensions" begin
+    mod = _module()
+    Core.eval(mod, :(const a = $(Dim{:a}([:x, :y])); const b = $(Dim{:b}([:p, :q, :r]))))
+    m = Core.eval(mod, :(Model(@equations begin
+        @parameters begin
+            u[a] = [1, -1], [unit = NoUnits]
+            w[b] = [1, 2, 3], [unit = NoUnits]
+        end
+        @variables begin
+            c[a, b], [unit = NoUnits]
+            z[a, b], [unit = NoUnits]
+        end
+        c ~ ifelse.(u .> 0, w, 0)             # a number among arrays of other dimensions
+        z ~ zidz.(w, u)
+    end; time = 0:1:1, time_unit = u"s")))
+    r = run_model(m)
+    @test parent(r[:c]) == [1 2 3; 0 0 0]
+    @test parent(r[:z]) == [1 2 3; -1 -2 -3]
+end
+
 @testset "DSL: a fixed delay of a parameter" begin
     # Vensim's DELAY FIXED of a constant: the initial value, then the constant
     m = _build("""@parameters begin

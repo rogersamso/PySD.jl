@@ -188,7 +188,11 @@ _bc(f, args...) = any(a -> a isa AbstractDimArray, args) ? _bc_dims(f, args...) 
 function _bc_dims(f, args...)
     arrays = [a for a in args if a isa AbstractDimArray]
     all(a -> DimensionalData.dims(a) == DimensionalData.dims(arrays[1]), arrays) && return f.(args...)
-    return broadcast_dims(f, args...)
+    all(a -> a isa AbstractDimArray, args) && return broadcast_dims(f, args...)
+    # numbers among the arrays (broadcast_dims takes only arrays): in the function
+    pos = findall(a -> a isa AbstractDimArray, collect(Any, args))
+    g(xs...) = f(ntuple(i -> (k = findfirst(==(i), pos); k === nothing ? args[i] : xs[k]), length(args))...)
+    return broadcast_dims(g, arrays...)
 end
 
 # --- operators of arrays: the scalar operator, element by element -------------
