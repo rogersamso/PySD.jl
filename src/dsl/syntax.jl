@@ -251,13 +251,16 @@ function _unit_words(x::Expr)
     foreach(_unit_words, x.args[2:end])
 end
 
-unit_value(u::DeclaredUnit) = _cached(() -> _unit_value(Meta.parse(u.text)), u.text)
+unit_value(u::DeclaredUnit) = _cached(() -> _as_unit(_unit_value(Meta.parse(u.text))), u.text)
 unit_value(u) = u
 
 const _UNITS = Dict{Any,Any}()             # read once: Unitful's parser is slow
 const _UNITS_LOCK = ReentrantLock()
 _cached(f, key) = lock(() -> get!(f, _UNITS, key), _UNITS_LOCK)
 _unit_value(x::Number) = x
+# `1/yr` is the number 1 over a unit: the unit, as Unitful's u"1/yr"
+_as_unit(x::Unitful.Quantity) = isone(Unitful.ustrip(x)) ? Unitful.unit(x) : x
+_as_unit(x) = x
 function _unit_value(x::Symbol)
     u = Unitful.uparse(string(x); unit_context = unique!([Unitful; Unitful.unitmodules]))
     return u isa Unitful.AffineUnits ? Unitful.absoluteunit(u) : u

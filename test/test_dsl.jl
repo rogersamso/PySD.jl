@@ -227,4 +227,14 @@ end
     mod = _module()
     Base.include(mod, joinpath(@__DIR__, "dsl", "beer_game.jl"))
     @test isempty(check_units(mod.beer_game()))
+    # a unit written as 1 over another: a unit, not the number 1/s
+    growth = _build("""@parameters begin
+                           k = 0.1, [unit = u"1/s"]
+                       end
+                       @variables begin
+                           x(t), [unit = u"kg"]
+                       end
+                       ∂t(x) ~ k * x
+                       x(t₀) ~ 1""")
+    @test isempty(check_units(growth))
 end
