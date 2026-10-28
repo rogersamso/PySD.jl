@@ -125,7 +125,11 @@ function _shape(x, L::Lowering)
             return _union(L.src, (_shape(a, L) for a in args[2:end])...)
         elseif haskey(_REDUCTIONS, f)
             d = _static_eval(args[2], L)
-            return _without(_shape(args[1], L), _dname(d))
+            s = _shape(args[1], L)
+            for e in (d isa Tuple ? d : (d,))
+                s = _without(s, _dname(e))
+            end
+            return s
         elseif f === DimensionalData.set
             return _renamed(_shape(args[1], L), _static_eval.(args[2:end], Ref(L)))
         elseif f === previous
@@ -290,6 +294,8 @@ function _emit(x, @nospecialize(T), L::Lowering)
     f = _fn(x.args[1])
     args = x.args[2:end]
     shape = _shape(x, L)
+    y = _nested_reduction(x, shape, L)
+    y === x || return _emit(y, T, L)
     if f === _bc
         return _dotcall(_python(_emit(args[1], (), L), L.numerics), _emit_all(args[2:end], T, L))
     elseif f === DimensionalData.set
@@ -331,6 +337,8 @@ end
 # compute `x` (dimensions `S`) into a buffer of its own, before the statement
 function _materialize(x, @nospecialize(S), L)
     isempty(S) && return _emit(x, (), L)
+    y = _nested_reduction(x, S, L)
+    y === x || return _materialize(y, S, L)
     w = _buffer!(L, S)
     push!(L.pre, :($w = p.work.$w))
     f = x isa Expr && x.head === :call ? _fn(x.args[1]) : nothing
@@ -386,13 +394,31 @@ _source(x, @nospecialize(S), L) = x isa Expr && x.head === :ref ? _emit_selectio
 
 _emit_materialized(x, @nospecialize(S), @nospecialize(T), L) = isempty(S) ? _reduce_scalar(x, L) : _layout(_materialize(x, S, L), S, T, L)
 
-# a reduction over the only dimension of an array: a number
+# a reduction over all the dimensions of an array: a number (a sum with
+# Python's digits adds as numpy, in memory order, the last dimension fastest)
 function _reduce_scalar(x, L)
     f = _fn(x.args[1])
     haskey(_REDUCE_ALL, f) || error("$(_where(L.src)): can't compute `$x` as a number")
     Sx = _shape(x.args[2], L)
-    g = f === sum_over && L.numerics === :python ? pysd_sum : _REDUCE_ALL[f]
-    return :($g($(_source(x.args[2], Sx, L))))
+    src = _source(x.args[2], Sx, L)
+    f === sum_over && L.numerics === :python && return :($pysd_sum($_rowmajor($src)))
+    return :($(_REDUCE_ALL[f])($src))
+end
+
+# sum_over(x, (a, b)) over some of the dimensions: one after the other (over
+# all of them, it's a number: _reduce_scalar)
+function _nested_reduction(x, shape, L)
+    (x isa Expr && x.head === :call) || return x
+    f = _fn(x.args[1])
+    haskey(_REDUCTIONS, f) || return x
+    ds = x.args[3]
+    (ds isa Expr && ds.head === :tuple) || return x
+    isempty(shape) && return x
+    y = x.args[2]
+    for e in ds.args
+        y = Expr(:call, x.args[1], y, e)
+    end
+    return y
 end
 
 function _previous!(w, x, ::Val{k}) where {k}

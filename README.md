@@ -105,6 +105,48 @@ r[:x]                      # x at each saved time
 - `run_model(m; check_units = true)` checks that every equation's units add
   up before running (`:warn` to only print what doesn't).
 
+### Data from other models or from files
+
+A model can take series from outside it, as Vensim's data variables without
+an equation: from another model's run (a regional model fed by a global one),
+or from a file of series:
+
+```julia
+@parameters begin
+    temperature_change = data(parents, :temperature_change), [unit = u"K"]
+end
+…
+damage ~ f(temperature_change(t))
+```
+
+`parents` is an input, a tuple of sources given when the model is built and
+when it runs; each series comes from the first source that has it, by name,
+interpolated linearly between the source's times.  A source is a run
+(`run_model(…)`) or a file, `series_file("history.tab")`: a `.csv` or `.tab`
+with the times in the first column and a column per series named as in
+Vensim (`Temperature change`, `GDP[EU]`), or a row per series, as Python
+PySD's `data_files`.
+
+```julia
+w  = run_model(world)
+eu = run_model(europe; inputs = (; parents = (w,)))
+w2 = run_model(world; params = (; k = 0.2))           # another world …
+eu2 = run_model(europe; inputs = (; parents = (w2,)))  # … the same Europe, no rebuild
+eu3 = run_model(europe; inputs = (; parents = (series_file("world.tab"),)))   # from a file
+```
+
+### The equations as LaTeX
+
+```julia
+using Latexify                          # loads PySD.jl's LaTeX export
+pysd_export_latex(m; filename = "model.tex")
+```
+
+writes the equations as they are written: a section per set of equations (a
+view of a translated model), stocks as dx/dt, `sum_over` as Σ, `ifelse` as
+cases, selections as `x[a]`, and a table of the names with their units and
+descriptions.  Without `filename` it returns the LaTeX as a string.
+
 ### Running a model again with other values
 
 `Model` compiles the model once.  After that, running it with other parameter

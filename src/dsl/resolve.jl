@@ -210,7 +210,10 @@ function _resolve_call(r::Resolver, i, x, bound, src)
     res(a) = _resolve(r, i, a, bound, src)
     if f isa Symbol && !(f in bound)
         full = _declared(r, i, f)
-        if full !== nothing && r.decls[full][1].kind === :variable
+        # a parameter delayed (Vensim's DELAY FIXED of a constant): its initial value, then it
+        delayed = length(pos) == 1 && pos[1] isa Expr && pos[1].head === :call &&
+                  pos[1].args[1] === :- && pos[1].args[2] === :t && haskey(kw, :init)
+        if full !== nothing && (r.decls[full][1].kind === :variable || delayed)
             # x(t₀): the value at the initial time;  x(t - τ; init): the value τ ago
             ref = VarRef(full)
             if pos == [:t₀]

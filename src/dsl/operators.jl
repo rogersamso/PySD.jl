@@ -126,10 +126,12 @@ _dimof(x::AbstractDimArray, d) = DimensionalData.dims(x, DimensionalData.name(d)
 
 """
     sum_over(x, d)
+    sum_over(x, (d1, d2, …))
 
-The sum over dimension `d`, which the result no longer has (Vensim's
-`SUM(x[d!])`; Julia's `sum(x; dims = d)` keeps `d` with length 1).
-`maximum_over`, `minimum_over` and `prod_over` likewise.
+The sum over dimension `d`, or over several at once, which the result no
+longer has (Vensim's `SUM(x[d!])`, `SUM(x[d1!, d2!])`; Julia's
+`sum(x; dims = d)` keeps `d` with length 1).  `maximum_over`, `minimum_over`
+and `prod_over` likewise.
 """
 sum_over(x::AbstractDimArray, d) = _reduce_over(sum, x, d)
 maximum_over(x::AbstractDimArray, d) = _reduce_over(maximum, x, d)
@@ -137,7 +139,7 @@ minimum_over(x::AbstractDimArray, d) = _reduce_over(minimum, x, d)
 prod_over(x::AbstractDimArray, d) = _reduce_over(prod, x, d)
 
 function _reduce_over(f, x, d)
-    n = DimensionalData.name(d)
+    n = d isa Tuple ? map(DimensionalData.name, d) : DimensionalData.name(d)
     r = dropdims(f(x; dims = n); dims = n)
     return ndims(r) == 0 ? r[] : r
 end

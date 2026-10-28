@@ -57,6 +57,7 @@ struct Model
     observe::Function
     units::Base.RefValue{Any}             # check_units' result, once it has run
     structural::Dict{Symbol,Any}          # parameters fixed when built (a delay's steps, an order): => where
+    sets::Vector{EquationSet}             # as written (for pysd_export_latex)
 end
 
 Base.show(io::IO, m::Model) = print(io, "Model(", length(m.vars), " names, ",
@@ -144,7 +145,8 @@ function _model(sets; time, time_unit, saveat = step(time), inputs::NamedTuple =
     observe = _compile(_rhs_code(vars, ops, statevec, L, :observe))
     buffers = Pair{Symbol,Tuple}[name => _size(dims) for (name, dims) in L.buffers]
     return Model(vars, byname, ops, k, t0, dt, Float64(last(time)), Float64(saveat), time_unit,
-                 inputs, env, buffers, params, init, rhs!, observe, Ref{Any}(nothing), structural)
+                 inputs, env, buffers, params, init, rhs!, observe, Ref{Any}(nothing), structural,
+                 collect(EquationSet, sets))
 end
 
 # --- equations --------------------------------------------------------------

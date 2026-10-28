@@ -24,7 +24,17 @@ function _sum_python!(w, x, ::Val{k}) where {k}
     return w
 end
 
+# numpy's order for a sum of all the elements: in memory, the last dimension fastest
+_rowmajor(x::AbstractArray) = ndims(x) <= 1 ? x : PermutedDimsArray(x, ntuple(i -> ndims(x) + 1 - i, ndims(x)))
+
 # the same on DimArrays, for constants computed once
+function _sum_over_python(x::AbstractDimArray, d::Tuple)
+    length(d) == ndims(x) && return pysd_sum(_rowmajor(parent(x)))      # all of them: as numpy, in x's order
+    for e in d
+        x = _sum_over_python(x, e)
+    end
+    return x
+end
 function _sum_over_python(x::AbstractDimArray, d)
     k = DimensionalData.dimnum(x, DimensionalData.name(d))
     rest = Tuple(e for (i, e) in enumerate(DimensionalData.dims(x)) if i != k)

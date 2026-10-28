@@ -240,6 +240,135 @@ end
     @test isempty(check_units(growth))
 end
 
+@testset "DSL: sums over several dimensions at once" begin
+    mod = _module()
+    Core.eval(mod, :(const a = $(Dim{:a}([:x, :y, :z])); const b = $(Dim{:b}(1:40))))
+    # values whose last digits depend on the order of the additions
+    Core.eval(mod, :(vals = [1 / (i + 7j) + 1e-3 * sin(i * j) for i in 1:3, j in 1:40]))
+    build(numerics) = Core.eval(mod, :(Model(@equations begin
+        @parameters begin
+            v[a, b] = vals, [unit = NoUnits]
+        end
+        @variables begin
+            s(t), [unit = NoUnits]
+            r(t)[a], [unit = NoUnits]
+            c, [unit = NoUnits]
+            w(t)[a, b], [unit = NoUnits]
+            q(t), [unit = NoUnits]
+        end
+        w ~ v .+ 0t
+        q ~ sum_over(smooth(w, 2), (a, b))     # over an operator's value
+        s ~ sum_over(v, (a, b)) + 0t          # changes with time: the code at every step
+        r ~ sum_over(v, (b,)) .+ 0t
+        c ~ sum_over(v, (a, b))                # a constant: computed once
+    end; time = 0:1:2, time_unit = u"s", numerics = $(QuoteNode(numerics)))))
+    vals = Core.eval(mod, :vals)
+    for numerics in (:julia, :python)
+        res = run_model(build(numerics))
+        @test res[:s][1] ≈ sum(vals) && res[:c] ≈ sum(vals)
+        @test res[:r][1] ≈ vec(sum(vals; dims = 2))
+        @test res[:q][1] ≈ sum(vals)                       # the smooth starts at its input
+    end
+    # with Python's digits, as numpy adds them: in memory order, the last dimension fastest
+    res = run_model(build(:python))
+    @test res[:s][1] === res[:c] === PySD.pysd_sum(permutedims(vals))
+end
+
+@testset "DSL: a fixed delay of a parameter" begin
+    # Vensim's DELAY FIXED of a constant: the initial value, then the constant
+    m = _build("""@parameters begin
+                      c = 5, [unit = u"m"]
+                  end
+                  @variables begin
+                      y(t), [unit = u"m"]
+                  end
+                  y ~ c(t - 2; init = 1)""")
+    @test run_model(m)[:y][1:4] == [1, 1, 5, 5]
+end
+
+@testset "DSL: data from a parent model's run" begin
+    mod = _module()
+    Core.eval(mod, :(const d = $(Dim{:d}([:a, :b]))))
+    m = Core.eval(mod, quote
+        world = @equations begin
+            @parameters begin
+                k = 0.1, [unit = u"1/s"]
+            end
+            @variables begin
+                x(t), [unit = u"m"]
+                y(t)[d], [unit = u"m"]
+            end
+            ∂t(x) ~ k * x
+            x(t₀) ~ 1
+            y[d = At(:a)] ~ 2x
+            y[d = At(:b)] ~ 3x
+        end
+        region = @equations begin
+            @parameters begin
+                xw = data(parents, :x), [unit = u"m"]
+                yw[d] = data(parents, :y), [unit = u"m"]
+                kw = data(parents, :k), [unit = u"1/s"]          # a constant: the same at every time
+            end
+            @variables begin
+                z(t), [unit = u"m"]
+                g(t), [unit = u"1/s"]
+            end
+            z ~ xw(t) + sum_over(yw(t), d)
+            g ~ kw(t)
+        end
+        (Model(world; time = 0:0.25:10, time_unit = u"s"),
+         Model(region; time = 0:0.25:10, time_unit = u"s", inputs = (; parents = ())))
+    end)
+    w, r = m
+    rw = run_model(w)
+    rr = run_model(r; inputs = (; parents = (rw,)))
+    @test rr[:z] ≈ 6 .* rw[:x]
+    @test all(==(0.1), rr[:g])
+    # without the parent's run: built, and the run says what it needs
+    @test_throws "comes from outside the model" run_model(r)
+    # the same series from a file, as Vensim names them (other capitals and spaces)
+    dir = mktempdir()
+    tab = joinpath(dir, "world.tab")
+    open(tab, "w") do io
+        println(io, "Time\tX\t\"Y[A]\"\tY[ B]\tK")
+        for (i, t) in enumerate(rw.time)
+            println(io, t, "\t", repr(rw[:x][i]), "\t", repr(rw[:y][i][1]), "\t", repr(rw[:y][i][2]), "\t", 0.1)
+        end
+    end
+    rf = run_model(r; inputs = (; parents = (series_file(tab),)))
+    @test rf[:z] == rr[:z]
+    @test all(==(0.1), rf[:g])
+    # a row per series, a .csv
+    csv = joinpath(dir, "world.csv")
+    open(csv, "w") do io
+        println(io, "Time,", join(rw.time, ","))
+        println(io, "x,", join(repr.(rw[:x]), ","))
+        println(io, "y[a],", join(repr.(first.(rw[:y])), ","))
+        println(io, "y[b],", join(repr.(last.(rw[:y])), ","))
+        println(io, "k,", join(fill(0.1, length(rw.time)), ","))
+    end
+    @test run_model(r; inputs = (; parents = (series_file(csv),)))[:z] == rr[:z]
+    # an array whose columns list its elements in another order of the dimensions
+    Core.eval(mod, :(const e = $(Dim{:e}([:p, :q]))))
+    r2 = Core.eval(mod, :(Model(@equations begin
+        @parameters begin
+            w[d, e] = data(parents, :w), [unit = NoUnits]
+        end
+        @variables begin
+            s(t), [unit = NoUnits]
+        end
+        s ~ sum_over(w(t), (d, e))
+    end; time = 0:1:2, time_unit = u"s", inputs = (; parents = ()))))
+    wtab = joinpath(dir, "w.tab")
+    open(wtab, "w") do io
+        println(io, "Time\tw[P,a]\tw[Q,a]\tw[P,b]\tw[Q,b]")
+        for t in 0:2
+            println(io, t, "\t1\t2\t", 3 + t, "\t4")
+        end
+    end
+    @test run_model(r2; inputs = (; parents = (series_file(wtab),)))[:s] == [10.0, 11.0, 12.0]
+end
+
 @testset "DSL: a model precompiled in a package" begin
     # a package that builds the teacup model when it's precompiled; a second
     # Julia session loads it built and compiled: no Model call in that session
@@ -277,4 +406,20 @@ end
     expected = run_model(_dsl("teacup"))[:teacup_temperature][end]
     @test loaded == "0 $expected"
     @test endswith(built, " $expected")
+end
+
+@testset "DSL: LaTeX of the equations" begin
+    @eval using Latexify
+    m = _dsl("teacup")
+    tex = Base.invokelatest(pysd_export_latex, m)
+    @test occursin("\\section*{teacup}", tex)                       # the set's file
+    @test occursin("\\frac{d\\,\\mathit{teacup\\_temperature}}{dt}", tex)
+    @test occursin("\\mathit{teacup\\_temperature}(t_0)", tex)
+    @test occursin("Name & Unit & Description", tex) && occursin("Teacup temperature", tex)
+    arrays = _dsl("arrays")
+    tex = Base.invokelatest(pysd_export_latex, arrays)
+    @test occursin("\\sum_{", tex)
+    file = joinpath(mktempdir(), "arrays.tex")
+    Base.invokelatest(pysd_export_latex, arrays; filename = file)
+    @test startswith(read(file, String), "\\documentclass")
 end
