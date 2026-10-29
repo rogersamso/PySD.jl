@@ -1,6 +1,7 @@
 # The DSL: @equations and Model, checked against Vensim's outputs
 # (SDXorg/test-models) and on the mistakes Model must catch.
-using DimensionalData: Dim, At, AbstractDimArray, DimArray, broadcast_dims
+using DimensionalData: Dim, At, AbstractDimArray, DimArray, DimStack, Ti, dims, broadcast_dims
+import Tables
 using PySD: pysd_exp, pysd_ln, pysd_power, pysd_sin, pysd_sum, pysd_sum_seq
 using LinearAlgebra: I
 include(joinpath(@__DIR__, "dsl", "check.jl"))
@@ -187,6 +188,39 @@ end
         p = PySD._runparams(m3)
         u = m3.init(p); du = similar(u)
         noalloc(Base.invokelatest(allocs, m3.rhs!.f, du, u, p))
+    end
+end
+
+@testset "DSL: results as tables" begin
+    m = _dsl("arrays")
+    r = run_model(m)
+    # a DimStack: a layer per name, over the time and its dimensions
+    st = DimStack(r)
+    @test dims(st[:s]) == (Ti(r.time), dims(r[:s][1])...)
+    @test st[:s][Ti = At(r.time[end])] == r[:s][end]
+    @test st[:total] == r[:total]
+    @test st[:rate][] == 0.1 && ndims(st[:rate]) == 0           # parameters: no time
+    @test dims(st[:m]) == dims(r[:m])
+    # Tables.jl: a column per name and element, Vensim's names, the first dimension slowest
+    cols = Tables.columns(r)
+    names = Tables.columnnames(cols)
+    @test names[1] === :time && Tables.getcolumn(cols, :time) == r.time
+    @test Tables.getcolumn(cols, :total) == r[:total]
+    s_cols = filter(n -> startswith(string(n), "s["), names)
+    @test s_cols == [Symbol("s[x,p]"), Symbol("s[x,q]"), Symbol("s[y,p]"), Symbol("s[y,q]"), Symbol("s[z,p]"), Symbol("s[z,q]")]
+    @test Tables.getcolumn(cols, Symbol("s[y,q]")) == [x[a = At(:y), b = At(:q)] for x in r[:s]]
+    @test Tables.getcolumn(cols, Symbol("m[x,y]")) == fill(0.2, length(r.time))   # a parameter, at every time
+    @test Tables.schema(cols).types[1] == Float64
+    @test length(Tables.rowtable(r)) == length(r.time)
+    # lookups are functions, not values: no layer, no column
+    if HAS_TEST_MODELS
+        mod = _module()
+        Core.eval(mod, :(const INPUTS = $(joinpath(TEST_MODELS, "get_lookups_subscripted_args"))))
+        lk = run_model(Base.include(mod, joinpath(@__DIR__, "dsl", "get_lookups_subscripted_args.jl")))
+        @test !haskey(DimStack(lk), :lookup_1d) && haskey(DimStack(lk), :r1d)
+        lnames = Tables.columnnames(Tables.columns(lk))
+        @test !(:lookup_1d in lnames) && !any(n -> startswith(string(n), "lookup_2d["), lnames)
+        @test :lookup_1d_time in lnames && Symbol("r1d[row1]") in lnames
     end
 end
 

@@ -138,6 +138,25 @@ eu2 = run_model(europe; inputs = (; parents = (w2,)))  # … the same Europe, no
 eu3 = run_model(europe; inputs = (; parents = (series_file("world.tab"),)))   # from a file
 ```
 
+### Results as tables
+
+`run_model`'s results are a Tables.jl table, with a column for the time and
+one per name and element, named as in Vensim's outputs and Python PySD's
+DataFrame (`stock[north,a]`); and `DimStack(r)` is a DimensionalData
+`DimStack`, a layer per name over the time (`Ti`) and its dimensions, as
+xarray's datasets:
+
+```julia
+using DataFrames, CSV
+df = DataFrame(r)                       # a column per name and element
+CSV.write("results.csv", r)
+st = DimStack(r)                        # st[:x][Ti = At(10.0)]
+```
+
+Parameters are in both, as Python PySD's DataFrame (a column at every time
+in the table; without the time in the `DimStack`); lookups and data series
+are functions, in neither.
+
 ### The equations as LaTeX
 
 ```julia
