@@ -4,6 +4,15 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## 0.3.2 (2026-10-29)
+
+### Fixed
+
+- Stiff solvers that compute the Jacobian with ForwardDiff (`Rodas5P()` and
+  the other Rosenbrock methods, by default) work on models with arrays: the
+  step writes into buffers of its state's number type when it isn't the
+  run's ([#31](https://github.com/rogersamso/PySD.jl/pull/31)).
+
 ## 0.3.1 (2026-10-29)
 
 ### New
