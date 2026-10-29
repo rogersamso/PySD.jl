@@ -241,6 +241,30 @@ On load, `check_compat` verifies that the installed PySD.jl is compatible.
 A major-version mismatch raises an error; a minor-version mismatch emits a
 warning.
 
+## Related work
+
+Writing models in Julia borrows from:
+
+- [ModelingToolkit.jl](https://github.com/SciML/ModelingToolkit.jl):
+  `@equations` takes the form of its `@mtkmodel`: `@parameters` and
+  `@variables` blocks, `~` for equations, `x(t)` for what changes with time,
+  and a unit and description after each declaration.
+- [BPTK-Py](https://github.com/transentis/bptk_py): stocks that can't go
+  below zero (`nonnegative = true`), parts of a model written once and used
+  several times, with their names in the results after the part's
+  (`retailer.inventory`, `wholesaler.inventory`), and errors that name the
+  algebraic loop (`a → b → a`).
+- [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl): arrays
+  with named dimensions, as xarray's in Python PySD.
+- [Unitful.jl](https://github.com/PainterQubits/Unitful.jl): units, and
+  checking that each equation's units add up.
+- [Vensim](https://vensim.com/) and [PySD](https://github.com/SDXorg/pysd):
+  the functions and their behaviour, and the reference outputs the tests
+  compare against ([SDXorg/test-models](https://github.com/SDXorg/test-models)).
+
+Also related: [StockFlow.jl](https://github.com/AlgebraicJulia/StockFlow.jl),
+stock-and-flow diagrams in Julia, with composition and stratification.
+
 ## License
 
 PySD.jl is released under the [MIT License](LICENSE).
