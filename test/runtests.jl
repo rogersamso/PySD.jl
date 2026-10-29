@@ -40,7 +40,7 @@ Base.getindex(s::FakeSol, i::Int, ::Colon) = [u[i] for u in s.u]
 # ambiguities, compat bounds for every dependency, no stale dependencies, …
 @testset "Aqua" begin
     # the test-only packages: the CI job with the oldest versions lists them as dependencies
-    Aqua.test_all(PySD; stale_deps = (; ignore = [:Aqua, :ForwardDiff, :Measurements]))
+    Aqua.test_all(PySD; stale_deps = (; ignore = [:Aqua, :ForwardDiff, :Measurements, :OrdinaryDiffEqLowOrderRK]))
 end
 
 @testset "check_compat" begin
@@ -417,6 +417,7 @@ include("test_params.jl")
 include("test_numpy_order.jl")
 include("test_number_types.jl")
 include("test_dsl.jl")
+include("test_sciml.jl")
 
 @testset "out of the domain: NaN, as numpy" begin
     @test pysd_ln(1.0) == 0.0 && isnan(pysd_ln(-1.0))
