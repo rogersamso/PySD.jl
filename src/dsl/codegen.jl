@@ -98,7 +98,7 @@ function _assign_once(v::Var, byname, numerics)
     end
     code = Any[:($(v.id) = $_blank($(QuoteNode(v.dims))))]
     for p in v.parts
-        push!(code, :($_setpart!($(v.id), $(fix(_lower_once(p.rhs, byname))), $(QuoteNode((; p.sels...))))))
+        push!(code, :($(v.id) = $_setpart!($(v.id), $(fix(_lower_once(p.rhs, byname))), $(QuoteNode((; p.sels...))))))
     end
     return Expr(:block, code...)
 end
@@ -473,7 +473,7 @@ function _init_code(vars, ops, statevec, n, L::Lowering)
         end
     end
     return _split(body, :(return u0), (:u0, :p, :t), vars, ops, statevec, :u0;
-                  pre = Any[:(t = p.t0), :(u0 = zeros($n))], caller = (:p,))
+                  pre = Any[:(t = p.t0), :(u0 = zeros(typeof(p.zero), $n))], caller = (:p,))
 end
 
 # --- helpers -----------------------------------------------------------------------
@@ -499,6 +499,9 @@ _align(x::AbstractDimArray, dims) = DimensionalData.dims(x) == dims ? x : permut
 _blank(dims) = DimArray(zeros(map(length, dims)), dims)
 
 function _setpart!(x::AbstractDimArray, val, sels::NamedTuple)
+    # a part of another number type (a Dual parameter's): the array takes it
+    T = promote_type(eltype(x), _numtype(val))
+    T === eltype(x) || (x = DimArray(Array{T}(parent(x)), DimensionalData.dims(x)))
     target = view(x; sels...)
     target .= val isa AbstractDimArray && ndims(target) > 0 ? parent(_align(val, DimensionalData.dims(target))) : val
     return x

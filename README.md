@@ -166,6 +166,23 @@ such as the time of a fixed delay (the number of steps it keeps) or the
 order of a smooth.  Changing it needs the model built again, and `run_model`
 says so with an error rather than ignoring the new value.
 
+### Derivatives and uncertainties
+
+A run computes in the number type of its parameters, so other kinds of
+numbers go through it.  With ForwardDiff.jl, the derivative of any result in
+a parameter (for calibration, or to see what a result is most sensitive to);
+with Measurements.jl, a parameter's uncertainty carried to every result:
+
+```julia
+using ForwardDiff, Measurements
+ForwardDiff.derivative(k -> run_model(m; params = (; k))[:x][end], 0.1)
+r = run_model(m; params = (; k = 0.1 ± 0.01))
+r[:x][end]                 # a value ± its uncertainty
+```
+
+The derivative is the exact one of the run, with its Euler steps, not an
+estimate from runs with nearby values.
+
 ### Loading a model in seconds: models as packages
 
 Building and compiling a large model takes minutes, every time a new Julia

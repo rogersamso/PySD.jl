@@ -190,6 +190,47 @@ end
     end
 end
 
+@testset "DSL: a run in the parameters' number type (Dual, Measurement)" begin
+    m = _dsl("teacup")
+    # Euler steps: T(t_N) - R = (T₀ - R)(1 - Δt/τ)^N, so ∂T(t_N)/∂R = 1 - (1 - Δt/τ)^N
+    exact = 1 - (1 - 0.125 / 10)^240
+    final(R) = run_model(m; params = (; room_temperature = R))[:teacup_temperature][end]
+    @test derivative(final, 70.0) ≈ exact rtol = 1e-12
+    @test value(final(Dual(70.0, 1.0))) == final(70.0)          # the same digits
+    r = run_model(m; params = (; room_temperature = 70 ± 2))
+    @test uncertainty(r[:teacup_temperature][end]) ≈ 2 * exact rtol = 1e-12
+    @test uncertainty(r[:heat_loss_to_room][1]) ≈ 0.2           # (180 - R) / τ
+    # operators' hidden stocks: initial values and delay times from the parameters
+    sm = _dsl("smooth")
+    smooth3i(x) = run_model(sm; params = (; initial_value = x))[:smooth3i_output][5]   # t = 1
+    h = 1e-6
+    @test derivative(smooth3i, 5.0) ≈ (smooth3i(5.0 + h) - smooth3i(5.0 - h)) / 2h rtol = 1e-6
+    dl = _dsl("subscripted_delays")
+    delayed(s) = sum(run_model(dl; params = (; delay_time = s .* [10, 3, 2, 4]))[:stock_delay3][end])
+    @test derivative(delayed, 1.0) ≈ (delayed(1.0 + h) - delayed(1.0 - h)) / 2h rtol = 1e-6
+    # a constant array written part by part from a parameter
+    parts = Base.include_string(_module(), """
+        const region = Dim{:region}([:north, :south])
+        growth = @equations begin
+            @parameters begin
+                k = 0.1, [unit = u"1/yr"]
+            end
+            @variables begin
+                rate[region], [unit = u"1/yr"]
+                x(t)[region], [unit = u"kg"]
+            end
+            rate[region = At(:north)] ~ k
+            rate[region = At(:south)] ~ 2k
+            ∂t(x) ~ rate .* x
+            x(t₀) ~ 1
+        end
+        Model(growth; time = 0:0.5:2, time_unit = u"yr")
+        """)
+    # x(t_N) = (1 + rate Δt)^N
+    @test derivative(k -> sum(run_model(parts; params = (; k))[:x][end]), 0.1) ≈
+          4 * 0.5 * 1.05^3 + 4 * 0.5 * 2 * 1.1^3 rtol = 1e-12
+end
+
 @testset "DSL: Python's digits or Julia's" begin
     mod = _module()
     Base.include(mod, joinpath(@__DIR__, "dsl", "numerics.jl"))
