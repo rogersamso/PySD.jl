@@ -72,12 +72,13 @@ dependency.
   scripts next to them.  To change one, change its script and run it from
   the repository root, and commit both.
 - **Documentation.** The README is the documentation.  A change that users
-  will notice updates it.
+  will notice updates it, and adds a line to `NEWS.md`, under "Unreleased".
 - **Code style.** There's no formatter.  Follow the code around your change:
   4 spaces, a docstring for a new exported function, and comments that say
   why rather than what.
 
-Don't change the version in `Project.toml`: it's set when a release is made.
+Don't change the version in `Project.toml`: it's set when a release is made,
+and `NEWS.md`'s "Unreleased" section becomes that version's.
 Models translated by PySD check the PySD.jl version they were written for
 (`check_compat`), so say in the pull request if your change renames or
 removes an exported function, or changes what one returns.
