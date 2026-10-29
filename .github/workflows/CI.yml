@@ -13,6 +13,7 @@ jobs:
     permissions:
       actions: write  # lets julia-actions/cache delete old caches
       contents: read
+      id-token: write  # uploads coverage to Codecov without a token (OIDC)
     strategy:
       fail-fast: false
       matrix:
@@ -27,6 +28,15 @@ jobs:
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
+      # coverage from one Julia version is enough
+      - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.version == '1'
+      - uses: codecov/codecov-action@v7
+        if: matrix.version == '1'
+        with:
+          files: lcov.info
+          # pull requests from forks get no OIDC token: Codecov takes theirs without one
+          use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
 
   # The oldest versions the compat bounds in Project.toml allow
   downgrade:
