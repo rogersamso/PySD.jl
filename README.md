@@ -10,12 +10,16 @@ system dynamics models directly in Julia ([below](#writing-models-in-julia)).
 ## Installation
 
 PySD.jl isn't in Julia's General registry yet.  To write models in Julia,
-install a release from GitHub:
+install it from GitHub:
 
 ```julia
 using Pkg
-Pkg.add(url = "https://github.com/rogersamso/PySD.jl", rev = "v0.3.2")
+Pkg.develop(url = "https://github.com/rogersamso/PySD.jl")
 ```
+
+`Pkg.develop` clones the repository (into `~/.julia/dev/PySD`, on `main`; `git
+checkout v0.3.2` there for a release).  `Pkg.add(url = …)` doesn't work: it
+can't clone the test models' git submodule.
 
 For models translated by PySD, use the copy in its checkout, the version
 its translations are written for:
