@@ -13,12 +13,10 @@ and the tests run before it.
   of Δt (`run_model(m)`, or `Euler()` with `dt = Δt`) they give Vensim's values
   as before, now copied exactly (the stocks gave s + (x - s), off in the last
   digit at times), and the state vector no longer holds a stage per step of
-  delay.  With other solvers they follow continuous time, the limit of Vensim's
-  results as Δt → 0, instead of acting as smooths of time Δt: the delay
-  interpolates its input at t - τ, and the sample stops where a condition
-  comparing `t` switches, so `sample_if_true(t == year, x)` samples (it never
-  did with adaptive steps).  The run still warns that the values aren't
-  Vensim's.
+  delay.  A model with them now runs only with `Euler()` and `dt = Δt`: other
+  solvers stop with an error instead of warning, as their values weren't
+  Vensim's (the delays acted as smooths of time Δt, and
+  `sample_if_true(t == year, x)` never sampled).
 
 ## 0.3.2 (2026-10-29)
 

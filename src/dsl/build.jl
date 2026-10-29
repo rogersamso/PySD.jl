@@ -349,13 +349,13 @@ function _make_operator(c::OperatorCall, byname, @nospecialize(p0), @nospecializ
     k === :smooth && return Smooth(Int(sv(get(c.kwargs, :order, 1))))
     k === :delay && return MaterialDelay(Int(sv(get(c.kwargs, :order, 1))))
     k === :trend && return Trend()
-    k === :sample_if_true && return SampleIfTrue(_comparison_times!(Any[], c.args[1], byname, sv))
+    k === :sample_if_true && return SampleIfTrue()
     k === :initial && return Initial()
     if k === :fixed_delay
         # as Python PySD: at least one step; 0.5 steps round to 1
         τ = sv(c.kwargs[:τ])
         n = round(Int, max(τ / dt, 1) + SMALL_VENSIM)
-        return FixedDelay(n, Float64(τ))
+        return FixedDelay(n)
     end
     error("unknown operator $k")
 end

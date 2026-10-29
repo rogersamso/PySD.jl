@@ -235,15 +235,10 @@ Stiff models, with time constants far apart, take a stiff solver, such as
 `run_model` doesn't do (callbacks, ensembles of runs, …), and
 `Results(m, sol)` the values of every name from its solution.
 
-Fixed delays and `sample_if_true` move by whole steps of Δt with `Euler()` and
-`dt = Δt`, and give Vensim's values.  With other solvers they follow continuous
-time, the limit of Vensim's results as Δt → 0: a fixed delay gives its input at
-t - τ, interpolated between the solver's steps (a delay shorter than a step
-gives the input at the last step), and `sample_if_true` samples at the end of
-each step and exactly where a condition comparing `t` switches (`t < 2015`,
-`t == year`).  Their values aren't Vensim's then, and the run warns.  Comparing
-with Euler at smaller steps (`run_model(m, Euler(); dt = Δt / 4)`) shows how
-far Vensim's Δt is from that limit.
+Fixed delays and `sample_if_true` move by whole steps of Δt, as Vensim: a model
+with them runs only with `Euler()` and `dt = Δt`, and other solvers stop with
+an error.  Comparisons with `t` hold at Vensim's times only with those steps
+too: with another solver their values aren't Vensim's.
 
 ### Loading a model in seconds: models as packages
 

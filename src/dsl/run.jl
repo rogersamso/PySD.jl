@@ -57,7 +57,6 @@ _numtype(x) = Float64
 
 # Euler steps, as Vensim; fixed delays and samples move by whole steps
 function _simulate(init, rhs!, observe, p, m::Model)
-    p.clock.steps = true
     u = init(p)
     du = similar(u)
     nsteps = round(Int, (m.tf - m.t0) / m.dt)
@@ -72,7 +71,7 @@ function _simulate(init, rhs!, observe, p, m::Model)
         n == nsteps && break
         rhs!(du, u, p, t)
         @. u += m.dt * du
-        _advance_all!(p, t, t + m.dt)
+        _advance_all!(p)
     end
     return times, saved
 end

@@ -74,32 +74,26 @@ output(::Trend, s, x, τ) = ifelse(s[1] == 0, zero(x / τ), (x - s[1]) / (τ * a
 output_args(::Trend) = (1, 2)
 
 # Operators that remember past values instead of integrating: no hidden stocks,
-# but a history of each run (src/dsl/history.jl).  With Euler steps of Δt they
-# move by whole steps, as Vensim; with other solvers they follow continuous time.
+# but a history of each run (src/dsl/history.jl), by whole steps of Δt, as
+# Vensim: only Euler steps of Δt run them.
 abstract type HistoryOperator <: StatefulOperator end
 nstates(::HistoryOperator) = 0
 
 """
-A fixed delay `x(t - τ; init)` (DELAY FIXED): with Euler steps of Δt, the input
-round(τ / Δt) steps before, copied exactly; with other solvers, the input at
-t - τ, interpolated between the solver's steps.
+A fixed delay `x(t - τ; init)` (DELAY FIXED): the input round(τ / Δt) steps
+before, copied exactly.
 """
 struct FixedDelay <: HistoryOperator
     n::Int                        # steps of Δt
-    τ::Float64
 end
 output_args(::FixedDelay) = ()
 init_args(::FixedDelay) = ()
 
 """
-SAMPLE IF TRUE: the input while the condition holds, the last sampled value
-after.  `switches`: the times at which the condition can change because it
-compares `t` (numbers, or the ids of parameters read in each run), so that
-other solvers than Euler stop there.
+SAMPLE IF TRUE: the input while the condition holds, the value of the last
+step where it held after.
 """
-struct SampleIfTrue <: HistoryOperator
-    switches::Vector{Any}
-end
+struct SampleIfTrue <: HistoryOperator end
 
 # a condition: true or false, or a number (an array of conditions holds 1.0 and 0.0)
 _true(c::Bool) = c

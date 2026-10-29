@@ -17,8 +17,7 @@ parameters and input sheets (as `run_model`'s).  Solve it with any ODE solver
 of every name from the solution.  `kwargs` go to `ODEProblem`.
 
 A model with fixed delays or `sample_if_true` gets a callback that keeps their
-histories: with `Euler()` and `dt = Δt` they move by whole steps, as Vensim;
-with other solvers they follow continuous time (see `run_model`).
+histories, by whole steps of Δt: solve it with `Euler()` and `dt = Δt`.
 """
 function SciMLBase.ODEProblem(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;), kwargs...)
     p = PySD._runparams(m; params, inputs)
@@ -57,17 +56,13 @@ Run `model` with a SciML ODE solver instead of Vensim's Euler steps, and save
 every `saveat`, as `run_model(model)`.  `kwargs` go to `solve` (`dt` is Δt
 unless given, `abstol`, `reltol`, …).
 
-`Euler()` with steps of Δt gives Vensim's values.  With other solvers, fixed
-delays and `sample_if_true` follow continuous time, the limit of Vensim's
-results as Δt → 0: a fixed delay gives its input at t - τ (interpolated between
-the solver's steps; a delay shorter than a step gives the input at the last
-step), and the sample takes the input at the end of each step and at the times
-where a condition comparing `t` switches.  Their values aren't Vensim's then,
-and the run warns.
+`Euler()` with steps of Δt gives Vensim's values.  A model with fixed delays or
+`sample_if_true` runs only that way: they move by whole steps of Δt.
 """
 function PySD.run_model(m::Model, alg::SciMLBase.AbstractODEAlgorithm; params::NamedTuple = (;),
                         inputs::NamedTuple = (;), check_units::Union{Bool,Symbol} = false, kwargs...)
     PySD._check_units_first(m, check_units)
+    _check_histories(m, alg, get(kwargs, :dt, m.dt))
     prob = SciMLBase.ODEProblem(m; params, inputs)
     saveat = collect(range(m.t0, m.tf; step = m.saveat))
     last(saveat) == m.tf || push!(saveat, m.tf)
@@ -79,53 +74,33 @@ end
 
 # --- fixed delays and SAMPLE IF TRUE (src/dsl/history.jl) ----------------------
 #
-# A callback after each accepted step keeps their histories.  It finds out at
-# the start which solver runs: Euler's steps of Δt keep a record per step, the
-# inputs at the step's start, as run_model(m); others a record at the end of
-# each step, and stop where conditions switch and where delays start.
+# They move by whole steps of Δt, as Vensim: only Euler's steps of Δt run them.
+# A callback after each step keeps a record per step, the inputs at the step's
+# start, as run_model(m).
+
+_euler_dt(alg, dt, m) = nameof(typeof(alg)) === :Euler && dt !== nothing && isapprox(dt, m.dt; rtol = 1e-12)
+
+function _check_histories(m::Model, alg, dt)
+    any(o -> o.op isa HistoryOperator, m.operators) || return
+    _euler_dt(alg, dt, m) && return
+    error("the model has fixed delays or sample_if_true, which move by whole steps of Δt, as Vensim: " *
+          "run it with Euler() and dt = Δt = $(m.dt), not $(nameof(typeof(alg)))" *
+          (dt === nothing ? "" : " with dt = $dt"))
+end
 
 function _histories_callback(m::Model)
     any(o -> o.op isa HistoryOperator, m.operators) || return nothing
     du = Ref{Any}(nothing)
-    switches = Ref(Float64[])
     function start!(c, u, t, integrator)
-        p = integrator.p
-        steps = nameof(typeof(integrator.alg)) === :Euler && isapprox(integrator.dt, m.dt; rtol = 1e-12)
-        p.clock.steps = steps
-        Base.invokelatest(m.init.f, p)                  # the histories from the start
+        _check_histories(m, integrator.alg, integrator.dt)
+        Base.invokelatest(m.init.f, integrator.p)       # the histories from the start
         du[] = similar(u)
-        if !steps
-            @warn "the model has fixed delays or sample_if_true: with $(nameof(typeof(integrator.alg)))" *
-                  (nameof(typeof(integrator.alg)) === :Euler ? " and dt = $(integrator.dt)" : "") *
-                  " they follow continuous time, the limit of Vensim's results as Δt → 0, so the values " *
-                  "aren't Vensim's (Euler() with dt = Δt gives them)"
-            switches[] = PySD._switch_times(m, p)
-            for ts in (switches[], PySD._delay_starts(m)), s in ts
-                SciMLBase.add_tstop!(integrator, s)
-            end
-            Base.invokelatest(m.rhs!.f, du[], u, p, t)
-            foreach(PySD._arrived_start!, p.delays)
-            foreach(PySD._arrived_start!, p.samples)
-        end
         SciMLBase.u_modified!(integrator, true)
     end
     function step!(integrator)
-        p = integrator.p
-        if p.clock.steps
-            # the inputs at the step's start: the values Euler stepped with
-            Base.invokelatest(m.rhs!.f, du[], integrator.uprev, p, integrator.tprev)
-            PySD._advance_all!(p, integrator.tprev, integrator.t)
-        else
-            t = integrator.t
-            switch = insorted(t, switches[])
-            if switch
-                Base.invokelatest(m.rhs!.f, du[], integrator.u, p, prevfloat(t))
-                foreach(PySD._before!, p.samples)
-            end
-            Base.invokelatest(m.rhs!.f, du[], integrator.u, p, t)
-            foreach(h -> PySD._arrived!(h, t, switch), p.delays)
-            foreach(h -> PySD._arrived!(h, t, switch), p.samples)
-        end
+        # the inputs at the step's start: the values Euler stepped with
+        Base.invokelatest(m.rhs!.f, du[], integrator.uprev, integrator.p, integrator.tprev)
+        PySD._advance_all!(integrator.p)
         SciMLBase.u_modified!(integrator, true)          # the next step reads the new histories
     end
     return SciMLBase.DiscreteCallback((u, t, integrator) -> true, step!;
