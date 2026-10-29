@@ -93,3 +93,5 @@ removes an exported function, or changes what one returns.
   GitHub waits for a maintainer to approve the CI run before it starts.
 - Pull requests are merged into `main` by a maintainer once they're
   reviewed.
+
+Contributions to PySD.jl are released under its [MIT License](LICENSE).
