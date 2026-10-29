@@ -9,11 +9,20 @@ system dynamics models directly in Julia ([below](#writing-models-in-julia)).
 
 ## Installation
 
-From the root of a PySD checkout:
+PySD.jl isn't in Julia's General registry yet.  To write models in Julia,
+install a release from GitHub:
 
 ```julia
 using Pkg
-Pkg.develop(path="pysd/builders/julia/PySD.jl")
+Pkg.add(url = "https://github.com/rogersamso/PySD.jl", rev = "v0.3.2")
+```
+
+For models translated by PySD, use the copy in its checkout, the version
+its translations are written for:
+
+```julia
+using Pkg
+Pkg.develop(path = "pysd/builders/julia/PySD.jl")
 ```
 
 ## What it provides
@@ -214,6 +223,9 @@ using OrdinaryDiffEqLowOrderRK                 # or OrdinaryDiffEq, for all of t
 r = run_model(m, Euler())                      # Vensim's steps, the same values as run_model(m)
 r = run_model(m, BS3(); reltol = 1e-8)         # the ODE solved with adaptive steps
 ```
+
+Stiff models, with time constants far apart, take a stiff solver, such as
+`Rodas5P()` from OrdinaryDiffEqRosenbrock.
 
 `ODEProblem(m; params, inputs)` is the model as a SciML problem, for what
 `run_model` doesn't do (callbacks, ensembles of runs, …), and
