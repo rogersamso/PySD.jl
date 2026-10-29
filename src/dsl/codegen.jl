@@ -374,9 +374,21 @@ function _pfields!(chains, x)
     return Expr(x.head, (_pfields!(chains, a) for a in x.args)...)
 end
 
+# A buffer for the step with state `u`: the run's own, or, for a state of
+# another number type (a stiff solver's Jacobian, with ForwardDiff), a new one
+# of that type.  Which one is known when the step is compiled: a run with
+# matching types allocates nothing more.
+_buf(b::AbstractArray{T}, ::AbstractArray{T}) where {T} = b
+_buf(b::AbstractArray, u::AbstractArray) = zeros(promote_type(eltype(b), eltype(u)), size(b))
+
 function _split(units, last, args, vars, ops, statevec, u; pre = Any[], caller = args)
     load = _loaders(vars, ops, statevec, u)
-    loads(x, have) = [:($s = $(load[s])) for s in sort!(collect(setdiff(_symbols!(Set{Symbol}(), x), have)))
+    # p.work.w3, as the step passes it to the equations: for the state `u`,
+    # taken once at the start (equations hand values to each other in them)
+    buffers = Dict{Symbol,Symbol}()
+    work(e) = e isa Expr && e.head === :. && e.args[1] == :(p.work) ?
+              get!(() -> Symbol("_work_", e.args[2].value), buffers, e.args[2].value) : e
+    loads(x, have) = [:($s = $(work(load[s]))) for s in sort!(collect(setdiff(_symbols!(Set{Symbol}(), x), have)))
                       if haskey(load, s) && load[s] !== nothing]
     body = Any[]
     numbers = Set{Symbol}()                     # numbers computed so far, locals of the caller
@@ -393,9 +405,9 @@ function _split(units, last, args, vars, ops, statevec, u; pre = Any[], caller =
         vals = Any[a for a in args if a in free]
         for s in sort!(collect(free))
             if haskey(load, s) && load[s] !== nothing
-                push!(names, s); push!(vals, load[s])
+                push!(names, s); push!(vals, work(load[s]))
             elseif haskey(chains, s)
-                push!(names, s); push!(vals, chains[s])
+                push!(names, s); push!(vals, work(chains[s]))
             elseif s in numbers
                 push!(names, s); push!(vals, s)
             end
@@ -408,10 +420,13 @@ function _split(units, last, args, vars, ops, statevec, u; pre = Any[], caller =
         push!(body, isempty(outs) ? call : :($(only(outs)) = $call))
         union!(numbers, outs)
     end
+    tail = loads(last, numbers)
+    take = [:($b = $_buf(p.work.$w, $u)) for (w, b) in sort!(collect(buffers))]
     return :(function ($(caller...),)
                  $(pre...)
+                 $(take...)
                  $(body...)
-                 $(loads(last, numbers)...)
+                 $(tail...)
                  $last
              end)
 end

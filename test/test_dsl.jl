@@ -2,6 +2,7 @@
 # (SDXorg/test-models) and on the mistakes Model must catch.
 using DimensionalData: Dim, At, AbstractDimArray, DimArray, DimStack, Ti, dims, broadcast_dims
 import Tables
+using ForwardDiff: jacobian
 using PySD: pysd_exp, pysd_ln, pysd_power, pysd_sin, pysd_sum, pysd_sum_seq
 using LinearAlgebra: I
 include(joinpath(@__DIR__, "dsl", "check.jl"))
@@ -263,6 +264,22 @@ end
     # x(t_N) = (1 + rate Δt)^N
     @test derivative(k -> sum(run_model(parts; params = (; k))[:x][end]), 0.1) ≈
           4 * 0.5 * 1.05^3 + 4 * 0.5 * 2 * 1.1^3 rtol = 1e-12
+end
+
+@testset "DSL: the step with a state of another number type (a Jacobian)" begin
+    # stiff solvers differentiate the rates in the state with ForwardDiff: the
+    # step writes into buffers of the state's number type, not the run's
+    for name in ("arrays", "subscripted_delays", "subscripted_smooth")
+        m = _dsl(name)
+        p = PySD._runparams(m)
+        u = m.init(p)
+        rates(u) = (du = similar(u); Base.invokelatest(m.rhs!.f, du, u, p, 1.0); du)
+        J = jacobian(rates, u)
+        h = 1e-6
+        fd = reduce(hcat, ((rates(u .+ h .* e) .- rates(u .- h .* e)) ./ 2h
+                           for e in eachcol(Matrix{Float64}(I, length(u), length(u)))))
+        @test J ≈ fd rtol = 1e-6 atol = 1e-8
+    end
 end
 
 @testset "DSL: Python's digits or Julia's" begin
