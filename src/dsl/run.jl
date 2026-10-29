@@ -38,9 +38,19 @@ function _runparams(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;)
     end
     inp = merge(m.inputs, inputs)
     par = Base.invokelatest(m.params, inp, params, m.env, m.t0, m.dt)
-    work = NamedTuple{Tuple(first.(m.buffers))}(Tuple(zeros(last(b)) for b in m.buffers))
-    return (; par, env = m.env, inputs = inp, t0 = m.t0, dt = m.dt, work)
+    T = promote_type(_numtype(par), _numtype(m.env))
+    work = NamedTuple{Tuple(first.(m.buffers))}(Tuple(zeros(T, last(b)) for b in m.buffers))
+    # `zero`: the run's number type, as a value (a type in a field would not be inferred)
+    return (; par, env = m.env, inputs = inp, t0 = m.t0, dt = m.dt, work, zero = zero(T))
 end
+
+# The number type the state and the buffers hold: Float64, or what the
+# parameters hold instead (ForwardDiff's Dual for derivatives, a Measurement
+# for uncertainties), so that it goes through the whole run.
+_numtype(x::Number) = typeof(float(x))
+_numtype(x::AbstractArray{<:Number}) = typeof(float(zero(eltype(x))))
+_numtype(x::Union{Tuple,NamedTuple}) = mapreduce(_numtype, promote_type, x; init = Float64)
+_numtype(x) = Float64
 
 # Euler steps, as Vensim
 function _simulate(init, rhs!, observe, p, m::Model)
@@ -73,17 +83,27 @@ units first ([`check_units`](@ref)) and stops if they don't add up;
 """
 function run_model(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;),
                    check_units::Union{Bool,Symbol} = false)
-    if check_units !== false
-        issues = PySD.check_units(m)
-        if !isempty(issues)
-            msg = "units don't add up in $(length(issues)) equations:\n" * join(string.(issues), "\n")
-            check_units === :warn ? @warn(msg) : error(msg)
-        end
-    end
+    _check_units_first(m, check_units)
     p = _runparams(m; params, inputs)
     times, saved = Base.invokelatest(_simulate, m.init.f, m.rhs!.f, m.observe.f, p, m)
-    return Results(times, saved, Dict(v.name => i for (i, v) in enumerate(_shown(m.vars))), p.par, m)
+    return _results(m, p, times, saved)
 end
+
+function _check_units_first(m::Model, check_units)
+    check_units === false && return
+    issues = PySD.check_units(m)
+    if !isempty(issues)
+        msg = "units don't add up in $(length(issues)) equations:\n" * join(string.(issues), "\n")
+        check_units === :warn ? @warn(msg) : error(msg)
+    end
+end
+
+_results(m::Model, p, times, saved) =
+    Results(times, saved, Dict(v.name => i for (i, v) in enumerate(_shown(m.vars))), p.par, m)
+
+# the values of every name at the given times, from the states there (a
+# solution of a SciML solver's)
+_observed(m::Model, p, times, states) = [m.observe.f(u, p, t) for (u, t) in zip(states, times)]
 
 """
     @precompile_model name = expr
