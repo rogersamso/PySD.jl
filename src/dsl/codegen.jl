@@ -400,7 +400,20 @@ function _split(units, last, args, vars, ops, statevec, u; pre = Any[], caller =
         free = setdiff(_symbols!(Set{Symbol}(), x), defined)
         outs = [s for s in defined if haskey(load, s) && load[s] === nothing]
         length(outs) <= 1 || error("one equation computing $(length(outs)) numbers: $outs")
-        # what it gets: the step's own arguments it uses, then names, fields of p, numbers
+        # what it gets: the step's own arguments it uses, then names, fields of p,
+        # numbers.  A value read from the state (u[3], a view of it) is read in the
+        # equation, from the state it gets: the step only passes what it has (each
+        # value it computed itself would make the step, hundreds of equations long,
+        # much slower to compile)
+        reads = Any[]
+        for s in sort!(collect(free))
+            haskey(load, s) && load[s] !== nothing || continue
+            ex = work(load[s])
+            ex isa Expr && !(ex.head === :. && ex.args[2] isa QuoteNode) || continue
+            push!(reads, :($s = $(_pfields!(chains, ex))))
+            union!(free, _symbols!(Set{Symbol}(), reads[end].args[2]))
+            delete!(free, s)
+        end
         names = Any[a for a in args if a in free]
         vals = Any[a for a in args if a in free]
         for s in sort!(collect(free))
@@ -413,6 +426,7 @@ function _split(units, last, args, vars, ops, statevec, u; pre = Any[], caller =
             end
         end
         id = _equation!(Tuple(names), quote
+                           $(reads...)
                            $x
                            return $(isempty(outs) ? nothing : only(outs))
                        end)
