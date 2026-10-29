@@ -237,3 +237,7 @@ Generated models embed the PySD.jl version they were translated against.
 On load, `check_compat` verifies that the installed PySD.jl is compatible.
 A major-version mismatch raises an error; a minor-version mismatch emits a
 warning.
+
+## License
+
+PySD.jl is released under the [MIT License](LICENSE).
