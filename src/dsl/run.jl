@@ -40,8 +40,11 @@ function _runparams(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;)
     par = Base.invokelatest(m.params, inp, params, m.env, m.t0, m.dt)
     T = promote_type(_numtype(par), _numtype(m.env))
     work = NamedTuple{Tuple(first.(m.buffers))}(Tuple(zeros(T, last(b)) for b in m.buffers))
+    # the histories of fixed delays and SAMPLE IF TRUE (src/dsl/history.jl)
+    clock, delays, samples = _histories(m, T)
     # `zero`: the run's number type, as a value (a type in a field would not be inferred)
-    return (; par, env = m.env, inputs = inp, t0 = m.t0, dt = m.dt, work, zero = zero(T))
+    return (; par, env = m.env, inputs = inp, t0 = m.t0, dt = m.dt, work, zero = zero(T),
+            clock, delays, samples)
 end
 
 # The number type the state and the buffers hold: Float64, or what the
@@ -52,8 +55,9 @@ _numtype(x::AbstractArray{<:Number}) = typeof(float(zero(eltype(x))))
 _numtype(x::Union{Tuple,NamedTuple}) = mapreduce(_numtype, promote_type, x; init = Float64)
 _numtype(x) = Float64
 
-# Euler steps, as Vensim
+# Euler steps, as Vensim; fixed delays and samples move by whole steps
 function _simulate(init, rhs!, observe, p, m::Model)
+    p.clock.steps = true
     u = init(p)
     du = similar(u)
     nsteps = round(Int, (m.tf - m.t0) / m.dt)
@@ -68,6 +72,7 @@ function _simulate(init, rhs!, observe, p, m::Model)
         n == nsteps && break
         rhs!(du, u, p, t)
         @. u += m.dt * du
+        _advance_all!(p, t, t + m.dt)
     end
     return times, saved
 end

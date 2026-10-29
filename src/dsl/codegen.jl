@@ -151,9 +151,13 @@ end
 
 _size(@nospecialize(dims)) = Tuple(Int[length(_labels(d)) for d in _dimvec(dims)])
 
-# an operator's hidden stocks: a vector, or (stages × elements) for arrays
-_opstates(o::Operator, u) = isempty(o.dims) ? :(view($u, $(o.range))) :
+# an operator's hidden stocks: a vector, or (stages × elements) for arrays;
+# a history operator's history in the run
+_opstates(o::Operator, u) = o.op isa HistoryOperator ? :(p.$(_histories_of(o.op))[$(o.slot)]) :
+    isempty(o.dims) ? :(view($u, $(o.range))) :
     :(reshape(view($u, $(o.range)), $((nstates(o.op), _size(o.dims)...))))
+_histories_of(::FixedDelay) = :delays
+_histories_of(::SampleIfTrue) = :samples
 
 # the target of an equation for a part: an element or a view
 function _part_target(target, v::Var, p::Part, L::Lowering)
@@ -206,8 +210,13 @@ function _opout_code(k, o::Operator, L::Lowering)
         all = _opargs(o, L)
         args = [i in _needed(o) ? a : nothing for (i, a) in enumerate(all)]
         ok, OP, sk = Symbol("o", k), QuoteNode(o.op), Symbol("s", k)
-        isempty(o.dims) ? :($ok = $output($OP, $sk, $(args...))) :
-            :($ok = $_op_output!(p.work.$ok, $OP, $sk, $(args...)))
+        if o.op isa HistoryOperator
+            isempty(o.dims) ? :($ok = $_hvalue($sk, $OP, t, $(args...))) :
+                :($ok = $_hvalue!(p.work.$ok, $sk, $OP, t, $(args...)))
+        else
+            isempty(o.dims) ? :($ok = $output($OP, $sk, $(args...))) :
+                :($ok = $_op_output!(p.work.$ok, $OP, $sk, $(args...)))
+        end
     end)
 end
 
@@ -264,6 +273,11 @@ function _rhs_code(vars, ops, statevec, L::Lowering, mode)
         end
     end
     for (k, o) in enumerate(ops)
+        if o.op isa HistoryOperator              # its inputs, which the history keeps after the step
+            push!(units, _block!(L, o.call.source, () ->
+                :($_hinput!($(Symbol("s", k)), $(QuoteNode(o.op)), $(_opargs(o, L)...)))))
+            continue
+        end
         push!(units, _block!(L, o.call.source, () -> isempty(o.dims) ?
             :($rates!(view(du, $(o.range)), $(QuoteNode(o.op)), $(Symbol("s", k)), $(_opargs(o, L)...))) :
             :($_op_rates!($(_opstates(o, :du)), $(QuoteNode(o.op)), $(Symbol("s", k)), $(_opargs(o, L)...)))))
@@ -489,6 +503,7 @@ function _init_code(vars, ops, statevec, n, L::Lowering)
                 s = Symbol("s", x)
                 need = _needed_init(o)
                 args = [i in need ? _oparg(a, o, L) : nothing for (i, a) in enumerate(o.call.args)]
+                o.op isa HistoryOperator ? :($_start!($s, $(QuoteNode(o.op)), t, $(args...); $(kws...))) :
                 isempty(o.dims) ? quote
                     $s = $initial_states($(QuoteNode(o.op)), $(args...); $(kws...))
                     u0[$(o.range)] .= $s

@@ -4,6 +4,22 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## Unreleased
+
+### Changed
+
+- **Fixed delays and SAMPLE IF TRUE keep histories instead of hidden stocks**
+  ([#33](https://github.com/rogersamso/PySD.jl/issues/33)).  With Euler steps
+  of Δt (`run_model(m)`, or `Euler()` with `dt = Δt`) they give Vensim's values
+  as before, now copied exactly (the stocks gave s + (x - s), off in the last
+  digit at times), and the state vector no longer holds a stage per step of
+  delay.  With other solvers they follow continuous time, the limit of Vensim's
+  results as Δt → 0, instead of acting as smooths of time Δt: the delay
+  interpolates its input at t - τ, and the sample stops where a condition
+  comparing `t` switches, so `sample_if_true(t == year, x)` samples (it never
+  did with adaptive steps).  The run still warns that the values aren't
+  Vensim's.
+
 ## 0.3.2 (2026-10-29)
 
 ### Fixed

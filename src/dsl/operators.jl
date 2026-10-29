@@ -73,31 +73,33 @@ rates!(d, ::Trend, s, x, τ) = (d[1] = (x - s[1]) / τ)
 output(::Trend, s, x, τ) = ifelse(s[1] == 0, zero(x / τ), (x - s[1]) / (τ * abs(s[1])))
 output_args(::Trend) = (1, 2)
 
-"A fixed delay `x(t - τ; init)` (DELAY FIXED): an exact pipeline of round(τ / Δt) Euler stages."
-struct FixedDelay <: StatefulOperator
-    n::Int
-    dt::Float64
+# Operators that remember past values instead of integrating: no hidden stocks,
+# but a history of each run (src/dsl/history.jl).  With Euler steps of Δt they
+# move by whole steps, as Vensim; with other solvers they follow continuous time.
+abstract type HistoryOperator <: StatefulOperator end
+nstates(::HistoryOperator) = 0
+
+"""
+A fixed delay `x(t - τ; init)` (DELAY FIXED): with Euler steps of Δt, the input
+round(τ / Δt) steps before, copied exactly; with other solvers, the input at
+t - τ, interpolated between the solver's steps.
+"""
+struct FixedDelay <: HistoryOperator
+    n::Int                        # steps of Δt
+    τ::Float64
 end
-nstates(op::FixedDelay) = op.n
-initial_states(op::FixedDelay, x; init = x) = fill(float(init), op.n)
-function rates!(d, op::FixedDelay, s, x)
-    d[1] = (x - s[1]) / op.dt
-    for i in 2:op.n
-        d[i] = (s[i-1] - s[i]) / op.dt
-    end
-end
-output(::FixedDelay, s, x) = s[end]
 output_args(::FixedDelay) = ()
 init_args(::FixedDelay) = ()
 
-"SAMPLE IF TRUE: the input while the condition holds, the last sampled value after."
-struct SampleIfTrue <: StatefulOperator
-    dt::Float64
+"""
+SAMPLE IF TRUE: the input while the condition holds, the last sampled value
+after.  `switches`: the times at which the condition can change because it
+compares `t` (numbers, or the ids of parameters read in each run), so that
+other solvers than Euler stop there.
+"""
+struct SampleIfTrue <: HistoryOperator
+    switches::Vector{Any}
 end
-nstates(::SampleIfTrue) = 1
-initial_states(::SampleIfTrue, c, x; init = x) = [float(init)]
-rates!(d, op::SampleIfTrue, s, c, x) = (d[1] = (ifelse(_true(c), x, s[1]) - s[1]) / op.dt)
-output(::SampleIfTrue, s, c, x) = ifelse(_true(c), x, s[1])
 
 # a condition: true or false, or a number (an array of conditions holds 1.0 and 0.0)
 _true(c::Bool) = c
