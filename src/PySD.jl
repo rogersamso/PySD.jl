@@ -15,6 +15,7 @@ using DimensionalData
 using DimensionalData: AbstractDimArray, DimArray, broadcast_dims
 using RuntimeGeneratedFunctions
 import PrecompileTools
+import Tables
 import Unitful
 using Unitful: @u_str, NoUnits
 
@@ -96,6 +97,7 @@ include("dsl/lower.jl")
 include("dsl/numerics.jl")
 include("dsl/codegen.jl")
 include("dsl/run.jl")
+include("dsl/tables.jl")
 include("dsl/units_check.jl")
 include("dsl/latex.jl")
 
