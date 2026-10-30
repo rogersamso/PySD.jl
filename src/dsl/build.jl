@@ -26,6 +26,7 @@ struct Operator
     op::StatefulOperator
     dims::Tuple                   # an operator of arrays: one set of hidden stocks per element
     range::UnitRange{Int}         # its hidden stocks in the state vector
+    slot::Int                     # a history operator's place among the run's histories of its kind
 end
 
 """
@@ -131,7 +132,8 @@ function _model(sets; time, time_unit, saveat = step(time), inputs::NamedTuple =
         dims = _union(call.source, (_shape(a, L) for a in [call.args; [v for (k, v) in call.kwargs if k === :init]])...)
         push!(L.opdims, dims)
         n = nstates(op) * prod(_size(dims); init = 1)
-        push!(ops, Operator(call, op, dims, (k + 1):(k + n)))
+        slot = op isa HistoryOperator ? count(o -> typeof(o.op) === typeof(op), ops) + 1 : 0
+        push!(ops, Operator(call, op, dims, (k + 1):(k + n), slot))
         k += n
     end
     for (i, o) in enumerate(ops)
@@ -347,12 +349,13 @@ function _make_operator(c::OperatorCall, byname, @nospecialize(p0), @nospecializ
     k === :smooth && return Smooth(Int(sv(get(c.kwargs, :order, 1))))
     k === :delay && return MaterialDelay(Int(sv(get(c.kwargs, :order, 1))))
     k === :trend && return Trend()
-    k === :sample_if_true && return SampleIfTrue(dt)
+    k === :sample_if_true && return SampleIfTrue()
     k === :initial && return Initial()
     if k === :fixed_delay
         # as Python PySD: at least one step; 0.5 steps round to 1
-        n = round(Int, max(sv(c.kwargs[:τ]) / dt, 1) + SMALL_VENSIM)
-        return FixedDelay(n, dt)
+        τ = sv(c.kwargs[:τ])
+        n = round(Int, max(τ / dt, 1) + SMALL_VENSIM)
+        return FixedDelay(n)
     end
     error("unknown operator $k")
 end

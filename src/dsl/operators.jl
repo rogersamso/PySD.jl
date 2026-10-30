@@ -73,31 +73,27 @@ rates!(d, ::Trend, s, x, τ) = (d[1] = (x - s[1]) / τ)
 output(::Trend, s, x, τ) = ifelse(s[1] == 0, zero(x / τ), (x - s[1]) / (τ * abs(s[1])))
 output_args(::Trend) = (1, 2)
 
-"A fixed delay `x(t - τ; init)` (DELAY FIXED): an exact pipeline of round(τ / Δt) Euler stages."
-struct FixedDelay <: StatefulOperator
-    n::Int
-    dt::Float64
+# Operators that remember past values instead of integrating: no hidden stocks,
+# but a history of each run (src/dsl/history.jl), by whole steps of Δt, as
+# Vensim: only Euler steps of Δt run them.
+abstract type HistoryOperator <: StatefulOperator end
+nstates(::HistoryOperator) = 0
+
+"""
+A fixed delay `x(t - τ; init)` (DELAY FIXED): the input round(τ / Δt) steps
+before, copied exactly.
+"""
+struct FixedDelay <: HistoryOperator
+    n::Int                        # steps of Δt
 end
-nstates(op::FixedDelay) = op.n
-initial_states(op::FixedDelay, x; init = x) = fill(float(init), op.n)
-function rates!(d, op::FixedDelay, s, x)
-    d[1] = (x - s[1]) / op.dt
-    for i in 2:op.n
-        d[i] = (s[i-1] - s[i]) / op.dt
-    end
-end
-output(::FixedDelay, s, x) = s[end]
 output_args(::FixedDelay) = ()
 init_args(::FixedDelay) = ()
 
-"SAMPLE IF TRUE: the input while the condition holds, the last sampled value after."
-struct SampleIfTrue <: StatefulOperator
-    dt::Float64
-end
-nstates(::SampleIfTrue) = 1
-initial_states(::SampleIfTrue, c, x; init = x) = [float(init)]
-rates!(d, op::SampleIfTrue, s, c, x) = (d[1] = (ifelse(_true(c), x, s[1]) - s[1]) / op.dt)
-output(::SampleIfTrue, s, c, x) = ifelse(_true(c), x, s[1])
+"""
+SAMPLE IF TRUE: the input while the condition holds, the value of the last
+step where it held after.
+"""
+struct SampleIfTrue <: HistoryOperator end
 
 # a condition: true or false, or a number (an array of conditions holds 1.0 and 0.0)
 _true(c::Bool) = c

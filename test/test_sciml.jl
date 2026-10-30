@@ -27,7 +27,23 @@ _close(a::AbstractArray, b::AbstractArray) = size(a) == size(b) && all(_close(x,
     res = Results(m, sol)
     @test res[:teacup_temperature][end] ≈ run_model(m; params = (; characteristic_time = 5))[:teacup_temperature][end]
     @test res[:characteristic_time] == 5
-    # operators that move by whole steps of Δt: other solvers warn
-    @test_logs (:warn, r"fixed delays or sample_if_true") run_model(_dsl("sample_if_true"), BS3())
+    # operators that move by whole steps of Δt: other solvers stop
+    @test_throws r"fixed delays or sample_if_true" run_model(_dsl("sample_if_true"), BS3())
     @test_logs run_model(_dsl("sample_if_true"), Euler())
+end
+
+@testset "DSL: fixed delays and samples with SciML solvers" begin
+    # Euler's steps of Δt: the same values as run_model's, to the last digit
+    m = _dsl("delay_fixed")
+    own = run_model(m)
+    sciml = @test_logs run_model(m, Euler())
+    @test all(k -> own[k] == sciml[k], keys(own))
+    s = _dsl("sample_if_true")
+    own = run_model(s)
+    sciml = run_model(s, Euler())
+    @test all(k -> own[k] == sciml[k], keys(own))
+    # they move by whole steps of Δt: other solvers, or other steps, stop
+    @test_throws r"Euler\(\) and dt = Δt" run_model(m, BS3())
+    @test_throws r"Euler\(\) and dt = Δt" run_model(s, Euler(); dt = m.dt / 2)
+    @test_throws r"Euler\(\) and dt = Δt" solve(ODEProblem(m), BS3())
 end
