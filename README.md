@@ -235,10 +235,13 @@ Stiff models, with time constants far apart, take a stiff solver, such as
 `run_model` doesn't do (callbacks, ensembles of runs, …), and
 `Results(m, sol)` the values of every name from its solution.
 
-Fixed delays and `sample_if_true` move by whole steps of Δt, as Vensim: a model
-with them runs only with `Euler()` and `dt = Δt`, and other solvers stop with
-an error.  Comparisons with `t` hold at Vensim's times only with those steps
-too: with another solver their values aren't Vensim's.
+Fixed delays and `sample_if_true` move by whole steps of Δt, as Vensim: at
+the model's ticks t₀ + k·Δt.  Any solver runs them: it stops at every tick,
+where they move, and its own steps in between integrate the stocks with them
+held.  `Euler()` with `dt = Δt` gives Vensim's values; other solvers give
+more accurate stocks, not faster runs (they can't step past a tick), and
+values that differ from Vensim's Euler, as for any model.  Comparisons with `t`
+hold at Vensim's times only with Euler's steps of Δt.
 
 ### Loading a model in seconds: models as packages
 

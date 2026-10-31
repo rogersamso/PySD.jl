@@ -16,8 +16,8 @@ parameters and input sheets (as `run_model`'s).  Solve it with any ODE solver
 (`Euler()` with `dt = Δt` is Vensim's); `Results(model, sol)` gives the values
 of every name from the solution.  `kwargs` go to `ODEProblem`.
 
-A model with fixed delays or `sample_if_true` gets a callback that keeps their
-histories, by whole steps of Δt: solve it with `Euler()` and `dt = Δt`.
+A model with fixed delays or `sample_if_true` gets a callback that stops the
+solver at every step of Δt (the model's ticks), where they move, as Vensim's.
 """
 function SciMLBase.ODEProblem(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;), kwargs...)
     p = PySD._runparams(m; params, inputs)
@@ -45,6 +45,7 @@ The values of every name at the times of `sol`, a solution of the model's
 """
 function PySD.Results(m::Model, sol::SciMLBase.AbstractODESolution)
     p = sol.prob.p
+    p.clock.tick, p.clock.held = -1, false          # the ticks are the times again
     saved = Base.invokelatest(PySD._observed, m, p, sol.t, sol.u)
     return PySD._results(m, p, collect(Float64, sol.t), saved)
 end
@@ -56,13 +57,13 @@ Run `model` with a SciML ODE solver instead of Vensim's Euler steps, and save
 every `saveat`, as `run_model(model)`.  `kwargs` go to `solve` (`dt` is Δt
 unless given, `abstol`, `reltol`, …).
 
-`Euler()` with steps of Δt gives Vensim's values.  A model with fixed delays or
-`sample_if_true` runs only that way: they move by whole steps of Δt.
+`Euler()` with steps of Δt gives Vensim's values.  Fixed delays and
+`sample_if_true` move only at the model's ticks, every Δt, whatever the
+solver: it stops at each, and its own steps in between integrate the stocks.
 """
 function PySD.run_model(m::Model, alg::SciMLBase.AbstractODEAlgorithm; params::NamedTuple = (;),
                         inputs::NamedTuple = (;), check_units::Union{Bool,Symbol} = false, kwargs...)
     PySD._check_units_first(m, check_units)
-    _check_histories(m, alg, get(kwargs, :dt, m.dt))
     prob = SciMLBase.ODEProblem(m; params, inputs)
     saveat = collect(range(m.t0, m.tf; step = m.saveat))
     last(saveat) == m.tf || push!(saveat, m.tf)
@@ -74,36 +75,36 @@ end
 
 # --- fixed delays and SAMPLE IF TRUE (src/dsl/history.jl) ----------------------
 #
-# They move by whole steps of Δt, as Vensim: only Euler's steps of Δt run them.
-# A callback after each step keeps a record per step, the inputs at the step's
-# start, as run_model(m).
+# They move by whole steps of Δt, the model's ticks, as Vensim: the solver is
+# made to stop at every tick, where a callback records the inputs there and
+# sets what the operators give until the next tick.  The solver's own steps
+# in between only integrate the stocks.  With Euler() and dt = Δt the ticks
+# are the solver's steps, and the values Vensim's.
 
-_euler_dt(alg, dt, m) = nameof(typeof(alg)) === :Euler && dt !== nothing && isapprox(dt, m.dt; rtol = 1e-12)
-
-function _check_histories(m::Model, alg, dt)
-    any(o -> o.op isa HistoryOperator, m.operators) || return
-    _euler_dt(alg, dt, m) && return
-    error("the model has fixed delays or sample_if_true, which move by whole steps of Δt, as Vensim: " *
-          "run it with Euler() and dt = Δt = $(m.dt), not $(nameof(typeof(alg)))" *
-          (dt === nothing ? "" : " with dt = $dt"))
-end
+_ticks(m::Model) = (m.t0 + k * m.dt for k in 1:round(Int, (m.tf - m.t0) / m.dt))
 
 function _histories_callback(m::Model)
     any(o -> o.op isa HistoryOperator, m.operators) || return nothing
     du = Ref{Any}(nothing)
+    function tick!(integrator, k)
+        p = integrator.p
+        p.clock.tick, p.clock.held = k, false
+        # the values at the tick, from the state there: the operators' inputs
+        Base.invokelatest(m.rhs!.f, du[], integrator.u, p, integrator.t)
+        PySD._advance_all!(p)
+        p.clock.held = true                              # until the next tick
+        SciMLBase.u_modified!(integrator, true)          # the rates change at the tick
+    end
     function start!(c, u, t, integrator)
-        _check_histories(m, integrator.alg, integrator.dt)
         Base.invokelatest(m.init.f, integrator.p)       # the histories from the start
         du[] = similar(u)
-        SciMLBase.u_modified!(integrator, true)
+        foreach(τ -> SciMLBase.add_tstop!(integrator, τ), _ticks(m))
+        tick!(integrator, 0)
     end
-    function step!(integrator)
-        # the inputs at the step's start: the values Euler stepped with
-        Base.invokelatest(m.rhs!.f, du[], integrator.uprev, integrator.p, integrator.tprev)
-        PySD._advance_all!(integrator.p)
-        SciMLBase.u_modified!(integrator, true)          # the next step reads the new histories
-    end
-    return SciMLBase.DiscreteCallback((u, t, integrator) -> true, step!;
+    # (a solver that stops just short of a tick, by rounding, is at the tick)
+    next(integrator) = integrator.p.clock.t0 + (integrator.p.clock.tick + 1) * integrator.p.clock.dt
+    at_tick(u, t, integrator) = t >= next(integrator) - 1e-9 * integrator.p.clock.dt
+    return SciMLBase.DiscreteCallback(at_tick, integrator -> tick!(integrator, integrator.p.clock.tick + 1);
                                       initialize = start!, save_positions = (false, false))
 end
 
