@@ -4,16 +4,25 @@
 # before, SAMPLE IF TRUE keeps the input of the last step where the condition
 # held.  Hidden stocks with rates (x - s) / Δt did that too, but only to the
 # last digit (s + (x - s) is not always x).  So they keep a record per step
-# instead, read by step: exact copies, as Vensim's.  Only Euler steps of Δt
-# (`run_model(m)`, or a SciML `Euler()` with `dt = Δt`) have those steps.
+# instead, read by step: exact copies, as Vensim's.
+#
+# The steps are the model's ticks, t₀ + k·Δt, whatever the solver's steps.
+# `run_model(m)` steps by Δt itself: the tick is the time's.  A SciML solver is
+# made to stop at every tick, where a callback records (ext/PySDSciMLBaseExt.jl); between
+# two ticks the solver may evaluate anywhere, so the callback says which tick
+# it is in, and the operators hold the values set at that tick.
 
-"A run's steps: from t₀, of Δt."
-struct Clock
+"A run's ticks: from t₀, every Δt; `tick ≥ 0` while a solver drives them."
+mutable struct Clock
     t0::Float64
     dt::Float64
+    tick::Int                    # -1: the tick is the time's
+    held::Bool                   # between ticks: samples hold what their tick set
 end
+Clock(t0, dt) = Clock(t0, dt, -1, false)
 
-_step(c::Clock, t) = round(Int, (t - c.t0) / c.dt)
+# (from the time: the last tick at or before t, as the values hold until the next)
+_step(c::Clock, t) = c.tick >= 0 ? c.tick : floor(Int, (t - c.t0) / c.dt + 1e-9)
 
 "A fixed delay's inputs, `E` values (its elements) per step."
 mutable struct DelayHistory{T}
@@ -70,10 +79,13 @@ function _delayed(h::DelayHistory, e, t)
     return j < 0 || n == 0 ? h.init[e] : h.values[min(j, n - 1) * _elements(h) + e]
 end
 
-_held(h::SampleHistory, e, t) = h.values[min(_step(h.clock, t), _records(h) - 1) * _elements(h) + e]
+# (between ticks, the tick's own record: one more than the tick's start)
+_held(h::SampleHistory, e, t) =
+    h.values[min(_step(h.clock, t) + h.clock.held, _records(h) - 1) * _elements(h) + e]
 
 _hvalue(h::DelayHistory, ::FixedDelay, t, x) = _delayed(h, 1, t)
-_hvalue(h::SampleHistory, ::SampleIfTrue, t, c, x) = (s = _held(h, 1, t); _true(c) ? promote(x, s)[1] : promote(x, s)[2])
+_hvalue(h::SampleHistory, ::SampleIfTrue, t, c, x) =
+    (s = _held(h, 1, t); _true(c) && !h.clock.held ? promote(x, s)[1] : promote(x, s)[2])
 
 function _hvalue!(out, h::DelayHistory, ::FixedDelay, t, x)
     for e in eachindex(out)
@@ -84,7 +96,7 @@ end
 
 function _hvalue!(out, h::SampleHistory, ::SampleIfTrue, t, c, x)
     for e in eachindex(out)
-        @inbounds out[e] = _true(_elem(c, e)) ? _elem(x, e) : _held(h, e, t)
+        @inbounds out[e] = _true(_elem(c, e)) && !h.clock.held ? _elem(x, e) : _held(h, e, t)
     end
     return out
 end

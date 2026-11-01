@@ -1,5 +1,5 @@
 # Models written with @equations, run with SciML's solvers (ext/PySDSciMLBaseExt.jl).
-using OrdinaryDiffEqLowOrderRK: Euler, BS3
+using OrdinaryDiffEqLowOrderRK: Euler, BS3, RK4
 using SciMLBase: ODEProblem, solve
 
 _close(a::Number, b::Number) = isapprox(a, b; rtol = 1e-10, atol = 1e-12)
@@ -27,8 +27,6 @@ _close(a::AbstractArray, b::AbstractArray) = size(a) == size(b) && all(_close(x,
     res = Results(m, sol)
     @test res[:teacup_temperature][end] ≈ run_model(m; params = (; characteristic_time = 5))[:teacup_temperature][end]
     @test res[:characteristic_time] == 5
-    # operators that move by whole steps of Δt: other solvers stop
-    @test_throws r"fixed delays or sample_if_true" run_model(_dsl("sample_if_true"), BS3())
     @test_logs run_model(_dsl("sample_if_true"), Euler())
 end
 
@@ -42,8 +40,51 @@ end
     own = run_model(s)
     sciml = run_model(s, Euler())
     @test all(k -> own[k] == sciml[k], keys(own))
-    # they move by whole steps of Δt: other solvers, or other steps, stop
-    @test_throws r"Euler\(\) and dt = Δt" run_model(m, BS3())
-    @test_throws r"Euler\(\) and dt = Δt" run_model(s, Euler(); dt = m.dt / 2)
-    @test_throws r"Euler\(\) and dt = Δt" solve(ODEProblem(m), BS3())
+    # they move at the model's ticks, whatever the solver: inputs of time
+    # alone give exactly run_model's values under any solver, at any step
+    for (alg, kw) in ((BS3(), (;)), (RK4(), (;)), (Euler(), (; dt = m.dt / 2)))
+        for model in (m, s)
+            own, other = run_model(model), run_model(model, alg; kw...)
+            @test other.time == own.time
+            @test all(k -> other[k] == own[k], keys(own))
+        end
+    end
+    # a solution read afterwards: at the ticks, run_model's values; between, the last tick's
+    sol = solve(ODEProblem(m), BS3(); saveat = [3.0, 3.5, 4.0])
+    @test Results(m, sol)[:df1] == [4.0, 4.0, 9.0]                # time_squared(t - 1)
+end
+
+@testset "DSL: stocks around fixed delays and samples, with any solver" begin
+    # Δt = 0.5: a stock fed by a fixed delay, a capital that a sample spends from
+    c = _dsl("clock")
+    own = run_model(c)
+    @test all(k -> run_model(c, Euler())[k] == own[k], keys(own))
+    # finer or better steps converge on one answer (the model with ticks every Δt)
+    exact = run_model(c, BS3(); reltol = 1e-11, abstol = 1e-13)
+    @test exact[:arrivals] == own[:arrivals]                 # the delay: still whole ticks
+    @test run_model(c, RK4(); reltol = 1e-11, abstol = 1e-13)[:capital] ≈ exact[:capital] rtol = 1e-8
+    err(r) = maximum(abs, r[:stock] .- exact[:stock]) + maximum(abs, r[:capital] .- exact[:capital])
+    errs = [err(run_model(c, Euler(); dt = c.dt / k)) for k in (1, 2, 4, 8)]
+    @test issorted(errs; rev = true) && errs[end] < errs[1] / 4
+    @test err(run_model(c, RK4(); adaptive = false)) < errs[end]
+    # the stock at 3.5, a step after the delayed orders arrive
+    @test exact[:stock][findfirst(==(3.5), exact.time)] ≈ 0.4424 atol = 1e-4
+end
+
+@testset "DSL: switches on the time, and equations written for steps of Δt" begin
+    # a step and a pulse at ticks: the solver stops there, and a step ending at
+    # a tick sees the time before it, so their stocks are exact
+    w = _dsl("switches")
+    for (alg, kw) in ((RK4(), (; adaptive = false)), (BS3(), (;)), (Euler(), (; dt = w.dt / 2)))
+        r = @test_logs run_model(w, alg; kw...)
+        @test r[:stepped][end] ≈ 2.0 atol = 1e-12
+        @test r[:pulsed][end] ≈ 1.0 atol = 1e-12
+    end
+    # what can't be made exact is named in a warning, but not for Vensim's Euler steps
+    s = _dsl("stepwise")
+    @test_logs run_model(s, Euler())
+    @test_logs (:warn, r"Δt as a value") match_mode = :any run_model(s, RK4())
+    names = Base.get_extension(PySD, :PySDSciMLBaseExt)._stepwise(s).names
+    @test Set(names.dt) == Set([:year_met, :drained])
+    @test names.equals == [:year_met] && names.nonnegative == [:level]
 end

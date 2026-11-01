@@ -13,10 +13,21 @@ and the tests run before it.
   of Δt (`run_model(m)`, or `Euler()` with `dt = Δt`) they give Vensim's values
   as before, now copied exactly (the stocks gave s + (x - s), off in the last
   digit at times), and the state vector no longer holds a stage per step of
-  delay.  A model with them now runs only with `Euler()` and `dt = Δt`: other
-  solvers stop with an error instead of warning, as their values weren't
-  Vensim's (the delays acted as smooths of time Δt, and
-  `sample_if_true(t == year, x)` never sampled).
+  delay.
+- **Fixed delays and SAMPLE IF TRUE run with any solver.**  They move at the
+  model's ticks, every Δt, as Vensim: a solver now stops at each tick, where
+  they record and move, and holds them between ticks.  Before, other solvers
+  gave values that weren't Vensim's model (the delays acted as smooths of
+  time Δt, and `sample_if_true(t == year, x)` never sampled).  `Euler()` with
+  `dt = Δt` still gives Vensim's values; other solvers give more accurate
+  stocks, never faster runs.
+- **Switches on the time are exact at the ticks with any solver.**  A model
+  with `t ≥ 2015`, STEP, PULSE or PULSE TRAIN stops at the ticks too, and a
+  solver's step ending at a tick sees the time just before it (Runge-Kutta's
+  last stage saw the switch already on, a sixth of a step early with RK4).
+- **A warning names the equations written for Euler steps of Δt** (Δt as a
+  value, the time tested for equality, non-negative stocks) when a model is
+  solved with any other solver than `Euler()` with `dt = Δt`.
 
 ## 0.3.2 (2026-10-29)
 
