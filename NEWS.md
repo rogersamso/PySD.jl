@@ -4,6 +4,28 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## Unreleased
+
+### Added
+
+- **RANDOM functions drawn once per tick, in translated models**:
+  `pysd_tick_uniform`, `pysd_tick_normal` and `pysd_tick_exponential` give a
+  standard draw for the tick, from a generator seeded from the call's stream,
+  the element and the tick.  So a draw holds between ticks, the values read
+  after a run are the ones the run used, and every run, with any solver,
+  draws the same.  (`pysd_random_*` draw at every call, and ignore the seed.)
+- **Switches on the time exact at the ticks, in translated models**
+  (`pysd_tick_time`), as in models written with `@equations` since 0.4.0.
+
+### Fixed
+
+- **PySD compiles in 40 s again** (about 7 min with 0.4.0).  The functions
+  0.4.0 registered with Symbolics for MTK models took up to nine arguments,
+  and Symbolics adds a method for every combination of plain and symbolic
+  arguments: 19,437 for `pysd_sampled`.  The record they read is now one
+  argument, `PySDRecord(ticks, key, n, I...)` (163 methods).  The calls of
+  0.4.0 still work in ODE models.
+
 ## 0.4.0 (2026-11-01)
 
 ### Added

@@ -74,8 +74,9 @@ export pysd_trunc, pysd_log_base, pysd_ln, pysd_sqrt, pysd_asin, pysd_acos,
        pysd_input, pysd_lookup, pysd_check_inputs, pysd_check_fixed, pysd_file, PySDFunction,
        save_results,
        check_compat, PYSD_JL_VERSION,
-       PySDTicks, pysd_reset_ticks!, pysd_begin_tick!, pysd_end_tick!, pysd_fixed_delay,
-       pysd_sampled, pysd_record!, pysd_ticks_callback, pysd_free_ticks!
+       PySDTicks, PySDRecord, pysd_reset_ticks!, pysd_begin_tick!, pysd_end_tick!, pysd_fixed_delay,
+       pysd_sampled, pysd_tick_time, pysd_record!, pysd_ticks_callback, pysd_free_ticks!,
+       pysd_tick_uniform, pysd_tick_normal, pysd_tick_exponential
 
 # the DSL (src/dsl).  The functions for equations (smooth, sum_over, …) are
 # found by @equations without being exported; new stateful operators extend

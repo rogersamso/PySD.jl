@@ -39,6 +39,24 @@ _record(T::PySDTicks, key) = get!(() -> Any[], T.records, key)
 _element(x, I) = isempty(I) ? x : x[I...]
 
 """
+    PySDRecord(ticks, key, n, I...)
+
+Which record a translated equation reads: of `ticks`, the one of `key` (a
+fixed delay, a sample, a RANDOM call's stream), `n` ticks back (a fixed
+delay's), element `I` of an array.  One argument instead of several, built
+with plain numbers when the equation is written: Symbolics registers a
+method for every combination of plain and symbolic arguments, 3ⁿ of them, so
+few arguments keep PySD quick to compile.
+"""
+struct PySDRecord{N}
+    ticks::PySDTicks
+    key::Int
+    n::Int
+    I::NTuple{N,Int}
+end
+PySDRecord(T::PySDTicks, key::Integer, n::Integer, I::Integer...) = PySDRecord(T, Int(key), Int(n), Int.(I))
+
+"""
     pysd_reset_ticks!(ticks)
 
 Forget every record and count the ticks from the start: at the start of a run.
@@ -70,6 +88,7 @@ function pysd_fixed_delay(T::PySDTicks, key, n::Integer, init, t, I...)
     return j < 0 || isempty(r) ? _initial(T, key, init, I) : _element(r[min(j, length(r) - 1) + 1], I)
 end
 # (frozen while the first tick is recorded; before a run, the value given)
+pysd_fixed_delay(R::PySDRecord, init, t) = pysd_fixed_delay(R.ticks, R.key, R.n, init, t, R.I...)
 _initial(T::PySDTicks, key, init, I) =
     T.tick == 0 && !T.held ? get!(T.initial, (key, I), init) : get(T.initial, (key, I), init)
 
@@ -90,8 +109,25 @@ function pysd_sampled(T::PySDTicks, key, condition, x, init, t, I...)
     isempty(r) && return init
     return _element(r[min(_tick(T, t), length(r) - 1) + 1], I)
 end
+pysd_sampled(R::PySDRecord, condition, x, init, t) = pysd_sampled(R.ticks, R.key, condition, x, init, t, R.I...)
 _holds(c::Bool) = c
 _holds(c::Real) = c > 0.5          # Vensim's conditions are 0 or 1
+
+"""
+    pysd_tick_time(ticks, t)
+
+The time the model sees.  While a solver runs, a step that ends at the next
+tick, before the callback has moved to it (Runge-Kutta's last stage), is
+still in the tick before: it sees the time just before the next tick, so a
+switch at a tick (`STEP`, `PULSE`, `Time >= 2015`) changes the rates from that
+tick on.  Otherwise, `t`.  (Back by more than `SMALL_VENSIM`, which `PULSE
+TRAIN` allows for.)
+"""
+function pysd_tick_time(T::PySDTicks, t)
+    T.tick >= 0 || return t
+    next = T.t0 + (T.tick + 1) * T.dt
+    return t >= next - 1e-9 * T.dt ? next - min(1e-5, T.dt / 100) : t
+end
 
 """
     pysd_record!(ticks, key, x)
@@ -118,14 +154,40 @@ After a solve: the tick is the time's again, to read the records at any time.
 """
 pysd_free_ticks!(T::PySDTicks) = (T.tick = -1; T.held = true; T)
 
+# --- RANDOM functions: one draw per tick ---------------------------------------
+#
+# Vensim draws a new number at every step of TIME STEP and keeps it for the
+# step.  Here a draw is a function of the call's stream (a number the
+# translator gives each RANDOM call, its seed included), the element of an
+# array and the tick: a generator seeded from them gives it.  So it holds
+# between ticks, the values read after a run are the draws the run used, and
+# every run, with any solver, draws the same.  The draws are standard ones,
+# which the translated equations scale and cut (RANDOM UNIFORM's lo + (hi -
+# lo) u, RANDOM NORMAL's mean + std z): the bounds stay ordinary expressions.
+
+_rng(T::PySDTicks, stream, t, I) = Random.Xoshiro(hash((stream, I, _tick(T, t))))
+
+"""
+    pysd_tick_uniform(record, t)
+    pysd_tick_normal(record, t)
+    pysd_tick_exponential(record, t)
+
+A standard draw (uniform on [0, 1), normal (0, 1), exponential (1)) for the
+tick at `t`, the same for the whole tick: from a generator seeded from the
+record's key (the RANDOM call's stream), its element and the tick.  The same
+draws in every run, with any solver.
+"""
+pysd_tick_uniform(R::PySDRecord, t) = rand(_rng(R.ticks, R.key, t, R.I))
+pysd_tick_normal(R::PySDRecord, t) = randn(_rng(R.ticks, R.key, t, R.I))
+pysd_tick_exponential(R::PySDRecord, t) = Random.randexp(_rng(R.ticks, R.key, t, R.I))
+
 # In ModelingToolkit models (PySD's MTK backend) they are black boxes of the
-# time: an element's index, the key and the number of ticks are numbers.  (The
-# type promotion is defined once per function: again would overwrite it.)
-@register_symbolic pysd_fixed_delay(T::PySDTicks, key::Int, n::Int, init::Real, t::Real)
-@register_symbolic pysd_fixed_delay(T::PySDTicks, key::Int, n::Int, init::Real, t::Real, i::Int) false
-@register_symbolic pysd_fixed_delay(T::PySDTicks, key::Int, n::Int, init::Real, t::Real, i::Int, j::Int) false
-@register_symbolic pysd_fixed_delay(T::PySDTicks, key::Int, n::Int, init::Real, t::Real, i::Int, j::Int, k::Int) false
-@register_symbolic pysd_sampled(T::PySDTicks, key::Int, condition::Real, x::Real, init::Real, t::Real)
-@register_symbolic pysd_sampled(T::PySDTicks, key::Int, condition::Real, x::Real, init::Real, t::Real, i::Int) false
-@register_symbolic pysd_sampled(T::PySDTicks, key::Int, condition::Real, x::Real, init::Real, t::Real, i::Int, j::Int) false
-@register_symbolic pysd_sampled(T::PySDTicks, key::Int, condition::Real, x::Real, init::Real, t::Real, i::Int, j::Int, k::Int) false
+# time, registered with Symbolics: the record they read is one plain argument
+# (PySDRecord), as Symbolics adds a method for every combination of plain and
+# symbolic arguments.
+@register_symbolic pysd_fixed_delay(R::PySDRecord, init::Real, t::Real)
+@register_symbolic pysd_sampled(R::PySDRecord, condition::Real, x::Real, init::Real, t::Real)
+@register_symbolic pysd_tick_time(T::PySDTicks, t::Real)
+@register_symbolic pysd_tick_uniform(R::PySDRecord, t::Real)
+@register_symbolic pysd_tick_normal(R::PySDRecord, t::Real)
+@register_symbolic pysd_tick_exponential(R::PySDRecord, t::Real)
