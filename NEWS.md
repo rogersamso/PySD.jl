@@ -6,6 +6,16 @@ and the tests run before it.
 
 ## Unreleased
 
+### Added
+
+- **Fixed delays and samples of models translated with PySD's ODE and MTK
+  backends, with any solver** (`src/ticks.jl`).  `PySDTicks` keeps a record
+  per fixed delay and sample, a value per tick of the model; the generated
+  code reads them (`pysd_fixed_delay`, `pysd_sampled`, registered with
+  Symbolics for MTK) and `pysd_ticks_callback` makes a solver stop at every
+  tick to record them.  Before, the translator wrote them as stocks that are
+  exact only with Euler steps of TIME STEP.
+
 ### Changed
 
 - **Fixed delays and SAMPLE IF TRUE keep histories instead of hidden stocks**

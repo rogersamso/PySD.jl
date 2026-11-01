@@ -73,7 +73,9 @@ export pysd_trunc, pysd_log_base, pysd_ln, pysd_sqrt, pysd_asin, pysd_acos,
        pysd_export_latex,
        pysd_input, pysd_lookup, pysd_check_inputs, pysd_check_fixed, pysd_file, PySDFunction,
        save_results,
-       check_compat, PYSD_JL_VERSION
+       check_compat, PYSD_JL_VERSION,
+       PySDTicks, pysd_reset_ticks!, pysd_begin_tick!, pysd_end_tick!, pysd_fixed_delay,
+       pysd_sampled, pysd_record!, pysd_ticks_callback, pysd_free_ticks!
 
 # the DSL (src/dsl).  The functions for equations (smooth, sum_over, …) are
 # found by @equations without being exported; new stateful operators extend
@@ -87,6 +89,7 @@ include("xlsx.jl")
 include("latex.jl")
 include("save_results.jl")
 include("params.jl")
+include("ticks.jl")
 include("dsl/units.jl")
 include("dsl/syntax.jl")
 include("dsl/operators.jl")

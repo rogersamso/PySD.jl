@@ -228,4 +228,25 @@ function _warn_stepwise(m::Model, stepwise)
           "whether the results change:\n" * join(lines, "\n") equations = stepwise.names _id = (:pysd_stepwise, objectid(m)) maxlog = 1
 end
 
+
+# --- the ticks of translated ODE and MTK models (src/ticks.jl) --------------
+
+function PySD.pysd_ticks_callback(T::PySD.PySDTicks, record!; t_final)
+    ticks = (T.t0 + k * T.dt for k in 1:round(Int, (t_final - T.t0) / T.dt))
+    function tick!(integrator)
+        PySD.pysd_begin_tick!(T, integrator.t)
+        record!(integrator.u, integrator.t)
+        PySD.pysd_end_tick!(T)                           # held until the next tick
+        SciMLBase.u_modified!(integrator, true)          # the rates change at the tick
+    end
+    function start!(c, u, t, integrator)
+        PySD.pysd_reset_ticks!(T)
+        foreach(τ -> SciMLBase.add_tstop!(integrator, τ), ticks)
+        tick!(integrator)
+    end
+    # (a solver that stops just short of a tick, by rounding, is at the tick)
+    at_tick(u, t, integrator) = t >= T.t0 + (T.tick + 1) * T.dt - 1e-9 * T.dt
+    return SciMLBase.DiscreteCallback(at_tick, tick!; initialize = start!, save_positions = (false, false))
+end
+
 end
