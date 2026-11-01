@@ -21,6 +21,13 @@ and the tests run before it.
   time Δt, and `sample_if_true(t == year, x)` never sampled).  `Euler()` with
   `dt = Δt` still gives Vensim's values; other solvers give more accurate
   stocks, never faster runs.
+- **Switches on the time are exact at the ticks with any solver.**  A model
+  with `t ≥ 2015`, STEP, PULSE or PULSE TRAIN stops at the ticks too, and a
+  solver's step ending at a tick sees the time just before it (Runge-Kutta's
+  last stage saw the switch already on, a sixth of a step early with RK4).
+- **A warning names the equations written for Euler steps of Δt** (Δt as a
+  value, the time tested for equality, non-negative stocks) when a model is
+  solved with any other solver than `Euler()` with `dt = Δt`.
 
 ## 0.3.2 (2026-10-29)
 

@@ -70,3 +70,21 @@ end
     # the stock at 3.5, a step after the delayed orders arrive
     @test exact[:stock][findfirst(==(3.5), exact.time)] ≈ 0.4424 atol = 1e-4
 end
+
+@testset "DSL: switches on the time, and equations written for steps of Δt" begin
+    # a step and a pulse at ticks: the solver stops there, and a step ending at
+    # a tick sees the time before it, so their stocks are exact
+    w = _dsl("switches")
+    for (alg, kw) in ((RK4(), (; adaptive = false)), (BS3(), (;)), (Euler(), (; dt = w.dt / 2)))
+        r = @test_logs run_model(w, alg; kw...)
+        @test r[:stepped][end] ≈ 2.0 atol = 1e-12
+        @test r[:pulsed][end] ≈ 1.0 atol = 1e-12
+    end
+    # what can't be made exact is named in a warning, but not for Vensim's Euler steps
+    s = _dsl("stepwise")
+    @test_logs run_model(s, Euler())
+    @test_logs (:warn, r"Δt as a value") match_mode = :any run_model(s, RK4())
+    names = Base.get_extension(PySD, :PySDSciMLBaseExt)._stepwise(s).names
+    @test Set(names.dt) == Set([:year_met, :drained])
+    @test names.equals == [:year_met] && names.nonnegative == [:level]
+end

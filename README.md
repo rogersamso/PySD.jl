@@ -240,8 +240,27 @@ the model's ticks t₀ + k·Δt.  Any solver runs them: it stops at every tick,
 where they move, and its own steps in between integrate the stocks with them
 held.  `Euler()` with `dt = Δt` gives Vensim's values; other solvers give
 more accurate stocks, not faster runs (they can't step past a tick), and
-values that differ from Vensim's Euler, as for any model.  Comparisons with `t`
-hold at Vensim's times only with Euler's steps of Δt.
+values that differ from Vensim's Euler, as for any model.
+
+Switches on the time (`t ≥ 2015`, STEP, PULSE, PULSE TRAIN) also stop the
+solver at every tick, and a step that ends at a tick sees the time just
+before it: a switch at a tick changes the rates from that tick on, exactly,
+with any solver.  A switch between ticks is where it is written (Vensim's
+Euler switches at the next tick).
+
+Some equations are written for Euler steps of Δt and may mean something else
+with another solver:
+
+- Δt used as a value: `(target - x) / Δt` sets a stock in one step,
+  `t / Δt` keeps the year in one, `growth / Δt` is a growth per step;
+- the time tested for equality (`t == 2020`): true for one Euler step, but
+  only at an instant for another solver (a `sample_if_true` condition is
+  fine: it is read at the ticks);
+- non-negative stocks, whose outflow is cut to what empties them in one step.
+
+Any other solver than `Euler()` with `dt = Δt` names them in a warning, once
+per model.  Whether they change a result, running with smaller steps
+(`Euler(); dt = Δt / 4`) shows.
 
 ### Loading a model in seconds: models as packages
 
