@@ -23,6 +23,13 @@ using SciMLBase: ODEProblem, solve
     @test pysd_fixed_delay(T, 1, 2, 9.0, 0.9, 2) == 9.0                  # tick 1: before the first two
     @test pysd_sampled(T, 2, false, 0.0, 0.0, 1.2) == 30.0               # held from tick 2
     @test pysd_sampled(T, 2, false, 0.0, 0.0, 1.0) == 30.0
+    # the time the model sees: at the next tick, before it is recorded, just before it
+    @test pysd_tick_time(T, 1.7) == 1.7                   # by time, after the run
+    T.tick = 2
+    @test pysd_tick_time(T, 1.2) == 1.2
+    @test 1.5 - 1e-4 < pysd_tick_time(T, 1.5) < 1.5          # the next tick (2 + 1) * 0.5
+    @test pysd_step(pysd_tick_time(T, 1.5), 1.0, 1.5) == 0.0
+    pysd_free_ticks!(T)
     pysd_reset_ticks!(T)
     @test isempty(T.records) && isempty(T.times)
     # an initial value that changes (the input itself): its value at the first tick

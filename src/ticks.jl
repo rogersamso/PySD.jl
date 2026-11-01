@@ -94,6 +94,22 @@ _holds(c::Bool) = c
 _holds(c::Real) = c > 0.5          # Vensim's conditions are 0 or 1
 
 """
+    pysd_tick_time(ticks, t)
+
+The time the model sees.  While a solver runs, a step that ends at the next
+tick, before the callback has moved to it (Runge-Kutta's last stage), is
+still in the tick before: it sees the time just before the next tick, so a
+switch at a tick (`STEP`, `PULSE`, `Time >= 2015`) changes the rates from that
+tick on.  Otherwise, `t`.  (Back by more than `SMALL_VENSIM`, which `PULSE
+TRAIN` allows for.)
+"""
+function pysd_tick_time(T::PySDTicks, t)
+    T.tick >= 0 || return t
+    next = T.t0 + (T.tick + 1) * T.dt
+    return t >= next - 1e-9 * T.dt ? next - min(1e-5, T.dt / 100) : t
+end
+
+"""
     pysd_record!(ticks, key, x)
 
 Records `x` for `key` at the current tick: a fixed delay's input, or a
@@ -126,6 +142,7 @@ pysd_free_ticks!(T::PySDTicks) = (T.tick = -1; T.held = true; T)
 @register_symbolic pysd_fixed_delay(T::PySDTicks, key::Int, n::Int, init::Real, t::Real, i::Int, j::Int) false
 @register_symbolic pysd_fixed_delay(T::PySDTicks, key::Int, n::Int, init::Real, t::Real, i::Int, j::Int, k::Int) false
 @register_symbolic pysd_sampled(T::PySDTicks, key::Int, condition::Real, x::Real, init::Real, t::Real)
+@register_symbolic pysd_tick_time(T::PySDTicks, t::Real)
 @register_symbolic pysd_sampled(T::PySDTicks, key::Int, condition::Real, x::Real, init::Real, t::Real, i::Int) false
 @register_symbolic pysd_sampled(T::PySDTicks, key::Int, condition::Real, x::Real, init::Real, t::Real, i::Int, j::Int) false
 @register_symbolic pysd_sampled(T::PySDTicks, key::Int, condition::Real, x::Real, init::Real, t::Real, i::Int, j::Int, k::Int) false

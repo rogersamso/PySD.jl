@@ -115,6 +115,7 @@ records at the model's ticks, which a solver stops at
 PySDTicks
 pysd_fixed_delay
 pysd_sampled
+pysd_tick_time
 pysd_record!
 pysd_ticks_callback
 pysd_begin_tick!
