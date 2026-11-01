@@ -1,0 +1,30 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  docs:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write   # lets julia-actions/cache delete old caches
+      contents: write  # pushes the built site to the gh-pages branch
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v3
+      - name: Install the documentation's dependencies
+        run: julia --project=docs -e 'using Pkg; Pkg.instantiate()'
+      # pull requests only build it (deploydocs skips them)
+      - name: Build and deploy
+        run: julia --project=docs docs/make.jl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
