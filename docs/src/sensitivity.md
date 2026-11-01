@@ -56,7 +56,16 @@ finals = [run_model(m; params = (; k))[:x][end] for k in values]
 ```
 
 Once compiled, a run of a large model takes about a second, so a sweep
-over every parameter of such a model takes minutes.
+over every parameter of such a model takes minutes.  The runs are
+independent, so they can share the work between threads (start Julia with
+`--threads=auto`):
+
+```julia
+finals = fetch.([Threads.@spawn run_model(m; params = (; k))[:x][end] for k in values])
+```
+
+Each run has its own buffers and histories; the input sheets they read are
+cached once for all.
 
 ## Derivatives: ForwardDiff
 

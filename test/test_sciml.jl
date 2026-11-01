@@ -85,6 +85,6 @@ end
     @test_logs run_model(s, Euler())
     @test_logs (:warn, r"Δt as a value") match_mode = :any run_model(s, RK4())
     names = Base.get_extension(PySD, :PySDSciMLBaseExt)._stepwise(s).names
-    @test Set(names.dt) == Set([:year_met, :drained])
+    @test Set(names.dt) == Set([:year_met, :drained])        # not slope: of the time alone
     @test names.equals == [:year_met] && names.nonnegative == [:level]
 end

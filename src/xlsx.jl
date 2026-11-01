@@ -26,10 +26,13 @@ end
 
 const _XLSX_CACHE = Dict{String, XLSX.XLSXFile}()
 const _SHEET_CACHE = Dict{Tuple{String, String}, _Sheet}()
+# (runs on several threads may read input sheets at once: one at a time here;
+# reentrant, as a sheet opens its file)
+const _CACHE_LOCK = ReentrantLock()
 
 function _xlsx_open(path::String)
     p = abspath(path)
-    get!(() -> XLSX.readxlsx(p), _XLSX_CACHE, p)
+    lock(() -> get!(() -> XLSX.readxlsx(p), _XLSX_CACHE, p), _CACHE_LOCK)
 end
 
 _file_ext(path::AbstractString) = lowercase(splitext(path)[2])
@@ -37,13 +40,15 @@ _is_xlsx(path::AbstractString) = _file_ext(path) in (".xlsx", ".xlsm")
 
 function _open_sheet(path::String, sheet::String)
     p = abspath(path)
-    get!(_SHEET_CACHE, (p, sheet)) do
-        if _is_xlsx(p)
-            _XLSXSheet(_xlsx_open(p)[sheet])
-        elseif _file_ext(p) == ".xls"
-            _GridSheet(_xls_grid(p, sheet))
-        else
-            _GridSheet(_text_grid(p, sheet))
+    lock(_CACHE_LOCK) do
+        get!(_SHEET_CACHE, (p, sheet)) do
+            if _is_xlsx(p)
+                _XLSXSheet(_xlsx_open(p)[sheet])
+            elseif _file_ext(p) == ".xls"
+                _GridSheet(_xls_grid(p, sheet))
+            else
+                _GridSheet(_text_grid(p, sheet))
+            end
         end
     end
 end
@@ -68,8 +73,12 @@ function _text_grid(path::String, sheet::String)
     return readdlm(IOBuffer(replace(content, r"\r\n?" => "\n")), delim, Any)
 end
 
+# (XLSX.jl reads a worksheet's cells on first use, filling a cache of its own:
+# one thread at a time)
 function _cells(s::_XLSXSheet, r1::Int, c1::Int, r2::Int, c2::Int)
-    data = s.ws[XLSX.CellRange(XLSX.CellRef(r1, c1), XLSX.CellRef(r2, c2))]
+    data = lock(_CACHE_LOCK) do
+        s.ws[XLSX.CellRange(XLSX.CellRef(r1, c1), XLSX.CellRef(r2, c2))]
+    end
     return data isa AbstractMatrix ? data : reshape(Any[data], 1, 1)
 end
 
@@ -79,7 +88,7 @@ function _cells(s::_GridSheet, r1::Int, c1::Int, r2::Int, c2::Int)
 end
 
 function _lastcell(s::_XLSXSheet)
-    stop = XLSX.get_dimension(s.ws).stop
+    stop = lock(() -> XLSX.get_dimension(s.ws).stop, _CACHE_LOCK)
     return stop.row_number, stop.column_number
 end
 

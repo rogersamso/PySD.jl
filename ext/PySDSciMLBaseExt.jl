@@ -149,7 +149,9 @@ _vensims(integrator, m) = nameof(typeof(integrator.alg)) === :Euler &&
 # - Δt as a value: `(target - x) / Δt` sets a stock in one step, `t / Δt` keeps
 #   the year in one, `growth / Δt` is a growth per step.  With smaller or
 #   other steps they become rates, not one-step moves.  (A time `t - Δt` or
-#   `t + Δt` given to a delay or a data series is a time, not one of these.)
+#   `t + Δt` given to a delay or a data series is a time, not one of these;
+#   nor is Δt in what depends on the time alone, such as a finite difference
+#   of data, `(data(t + Δt) - data(t)) / Δt`: _of_time.)
 # - the time tested for equality (`t == 2020`): true for one Euler step, but at
 #   one instant for another solver (a sample's condition is read at the ticks,
 #   so it is not one of these).
@@ -189,14 +191,44 @@ function _scan!(found, ex)
     end
 end
 
+# The variables that depend on the time alone: parameters, data series and
+# lookups, and what is computed from them only (with fixed delays and samples of
+# them).  Δt in one of these is a finite difference or a lag of data, the same
+# function of the time with any solver; Δt that reaches the stocks' rates
+# through anything else (a rate per step, a latch) is not.
+function _of_time(m::Model)
+    of_time = Set{Symbol}(v.name for v in m.vars if v.kind in (:parameter, :constant))
+    refs(x) = (out = Any[]; _refs!(out, x); out)
+    known(x) = all(r -> r isa PySD.OpRef ? _op_of_time(m, r.k, known) : r.name in of_time, refs(x))
+    grown = true
+    while grown
+        grown = false
+        for v in m.vars
+            (v.kind === :aux && !(v.name in of_time)) || continue
+            if all(q -> known(q.rhs), v.parts)
+                push!(of_time, v.name)
+                grown = true
+            end
+        end
+    end
+    return of_time
+end
+_refs!(out, x::Union{PySD.VarRef,PySD.OpRef}) = push!(out, x)
+_refs!(out, x::Expr) = foreach(a -> _refs!(out, a), x.args)
+_refs!(out, x) = out
+# a fixed delay or a sample of what depends on the time alone (a smooth keeps a state)
+_op_of_time(m, k, known) = (o = m.operators[k]; o.op isa HistoryOperator &&
+                            all(known, o.call.args) && all(known, values(o.call.kwargs)))
+
 function _stepwise(m::Model)
     names = (dt = Symbol[], equals = Symbol[], nonnegative = Symbol[])
     switches = false
+    of_time = _of_time(m)
     for v in m.vars
         v.kind in (:stock, :aux) || continue
         found = Set{Symbol}()
         foreach(q -> _scan!(found, q.rhs), v.kind === :stock ? v.rate : v.parts)
-        :dt in found && push!(names.dt, v.name)
+        :dt in found && !(v.name in of_time) && push!(names.dt, v.name)
         :equals in found && push!(names.equals, v.name)
         switches |= :switch in found
         v.kind === :stock && get(v.decl.metadata, :nonnegative, false) && push!(names.nonnegative, v.name)

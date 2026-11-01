@@ -158,10 +158,14 @@ modeller knows what was meant.  So any solver other than `Euler()` with `dt =
 │   1 are non-negative stocks (their outflow is cut to what empties them in one step): level
 ```
 
-Not every one changes a result: a finite difference such as `(data(t + Δt) -
-data(t)) / Δt` uses Δt as a value and means the same with any solver.
-Running with smaller steps shows which do: a difference that shrinks as the
-step halves is integration error; one that stays is a change of meaning.
-A time `t - Δt` or `t + Δt` given to a delay or a data series is a time, and
-not named; nor is the condition of a `sample_if_true`, which is read at the
-ticks.
+Not named, as they mean the same with any solver:
+
+- an equation that depends on the time alone (parameters, data series,
+  lookups, and fixed delays or samples of them), such as a finite difference
+  of data, `(data(t + Δt) - data(t)) / Δt`;
+- a time `t - Δt` or `t + Δt` given to a delay or a data series;
+- the condition of a `sample_if_true`, which is read at the ticks.
+
+Not every one named changes a result.  Running with smaller steps shows
+which do: a difference that shrinks as the step halves is integration error;
+one that stays is a change of meaning.
