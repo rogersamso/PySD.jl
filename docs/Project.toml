@@ -1,0 +1,15 @@
+[deps]
+DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+Measurements = "eff96d63-e80a-5855-80a2-b1b0885c5ab7"
+OrdinaryDiffEqLowOrderRK = "1344f307-1e59-4825-a18e-ace9aa3fa4c6"
+PySD = "d7e3e0f0-7a2b-4e3a-9c1d-5a6b8c9d0e1f"
+SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
+
+[sources]
+PySD = {path = ".."}
+
+[compat]
+Documenter = "1"
