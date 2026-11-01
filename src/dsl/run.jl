@@ -41,10 +41,10 @@ function _runparams(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;)
     T = promote_type(_numtype(par), _numtype(m.env))
     work = NamedTuple{Tuple(first.(m.buffers))}(Tuple(zeros(T, last(b)) for b in m.buffers))
     # the histories of fixed delays and SAMPLE IF TRUE (src/dsl/history.jl)
-    clock, delays, samples = _histories(m, T)
+    clock, delays, samples, randoms = _histories(m, T)
     # `zero`: the run's number type, as a value (a type in a field would not be inferred)
     return (; par, env = m.env, inputs = inp, t0 = m.t0, dt = m.dt, work, zero = zero(T),
-            clock, delays, samples)
+            clock, delays, samples, randoms)
 end
 
 # The number type the state and the buffers hold: Float64, or what the

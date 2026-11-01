@@ -181,6 +181,34 @@ pysd_tick_uniform(R::PySDRecord, t) = rand(_rng(R.ticks, R.key, t, R.I))
 pysd_tick_normal(R::PySDRecord, t) = randn(_rng(R.ticks, R.key, t, R.I))
 pysd_tick_exponential(R::PySDRecord, t) = Random.randexp(_rng(R.ticks, R.key, t, R.I))
 
+"""
+    pysd_tick_normal(record, a, b, t)
+    pysd_tick_exponential(record, b, t)
+
+A standard draw truncated, as Vensim's and Python PySD's RANDOM NORMAL and
+RANDOM EXPONENTIAL: a normal (0, 1) between `a` and `b`, an exponential (1)
+below `b`.  Drawn again while outside (from the same generator, so the same in
+every run).
+"""
+pysd_tick_normal(R::PySDRecord, a, b, t) = _truncnormal(_rng(R.ticks, R.key, t, R.I), a, b)
+pysd_tick_exponential(R::PySDRecord, b, t) = _truncexp(_rng(R.ticks, R.key, t, R.I), b)
+
+# (as scipy's truncnorm and truncexpon; after many tries, the nearest bound)
+function _truncnormal(rng, a, b)
+    for _ in 1:10_000
+        z = randn(rng)
+        a <= z <= b && return z
+    end
+    return clamp(randn(rng), a, b)
+end
+function _truncexp(rng, b)
+    for _ in 1:10_000
+        x = Random.randexp(rng)
+        x <= b && return x
+    end
+    return min(Random.randexp(rng), b)
+end
+
 # In ModelingToolkit models (PySD's MTK backend) they are black boxes of the
 # time, registered with Symbolics: the record they read is one plain argument
 # (PySDRecord), as Symbolics adds a method for every combination of plain and
@@ -191,3 +219,5 @@ pysd_tick_exponential(R::PySDRecord, t) = Random.randexp(_rng(R.ticks, R.key, t,
 @register_symbolic pysd_tick_uniform(R::PySDRecord, t::Real)
 @register_symbolic pysd_tick_normal(R::PySDRecord, t::Real)
 @register_symbolic pysd_tick_exponential(R::PySDRecord, t::Real)
+@register_symbolic pysd_tick_normal(R::PySDRecord, a::Real, b::Real, t::Real) false
+@register_symbolic pysd_tick_exponential(R::PySDRecord, b::Real, t::Real) false

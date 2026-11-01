@@ -41,6 +41,12 @@ mutable struct SampleHistory{T}
     values::Vector{T}
 end
 
+"A RANDOM call: its draws are a function of the call (`key`), the element and the tick."
+struct RandomHistory
+    clock::Clock
+    key::Int
+end
+
 _elements(h::Union{DelayHistory,SampleHistory}) = length(h.input)
 _records(h) = length(h.values) ÷ _elements(h)
 
@@ -70,6 +76,8 @@ function _start!(h::SampleHistory, ::SampleIfTrue, t, c, x; init = x)
     return h
 end
 
+_start!(h::RandomHistory, ::RandomDraw, t, args...; kws...) = h
+
 # --- the operator's value at time t --------------------------------------------
 
 # (a solver may look ahead, at the end of a step, before the step's record: it
@@ -84,6 +92,32 @@ _held(h::SampleHistory, e, t) =
     h.values[min(_step(h.clock, t) + h.clock.held, _records(h) - 1) * _elements(h) + e]
 
 _hvalue(h::DelayHistory, ::FixedDelay, t, x) = _delayed(h, 1, t)
+_hvalue(h::RandomHistory, op::RandomDraw, t, args...) = _draw(h, op, 1, t, args...)
+
+function _hvalue!(out, h::RandomHistory, op::RandomDraw, t, args...)
+    for e in eachindex(out)
+        @inbounds out[e] = _draw(h, op, e, t, map(a -> _elem(a, e), args)...)
+    end
+    return out
+end
+
+# a RANDOM draw, as Python PySD's: uniform; normal(mean, sd) truncated to [lo, hi];
+# shift + stretch · exponential, shift at least lo, truncated at hi
+function _draw(h::RandomHistory, op::RandomDraw, e, t, args...)
+    rng = Random.Xoshiro(hash((op.seed, h.key, e, _step(h.clock, t))))
+    k = op.kind
+    k === :random_0_1 && return rand(rng)
+    if k === :random_uniform
+        lo, hi = args
+        return lo + (hi - lo) * rand(rng)
+    elseif k === :random_normal
+        lo, hi, mean, sd = args
+        return mean + sd * _truncnormal(rng, pysd_xidz(lo - mean, sd, -Inf), pysd_xidz(hi - mean, sd, Inf))
+    end
+    lo, hi, shift, stretch = args
+    loc = max(lo, shift)
+    return loc + stretch * _truncexp(rng, pysd_xidz(hi - loc, stretch, Inf))
+end
 _hvalue(h::SampleHistory, ::SampleIfTrue, t, c, x) =
     (s = _held(h, 1, t); _true(c) && !h.clock.held ? promote(x, s)[1] : promote(x, s)[2])
 
@@ -102,6 +136,8 @@ function _hvalue!(out, h::SampleHistory, ::SampleIfTrue, t, c, x)
 end
 
 # --- the inputs at the step computed last ----------------------------------------
+
+_hinput!(h::RandomHistory, ::RandomDraw, args...) = h      # nothing to keep
 
 function _hinput!(h::DelayHistory{T}, ::FixedDelay, x) where {T}
     _keeps(T, x) || return h
@@ -134,6 +170,8 @@ function _advance!(h::SampleHistory)
     return h
 end
 
+_advance!(h::RandomHistory) = h
+
 function _advance_all!(p)
     foreach(_advance!, p.delays)
     foreach(_advance!, p.samples)
@@ -144,7 +182,7 @@ end
 function _histories(m, ::Type{T}) where {T}
     clock = Clock(m.t0, m.dt)
     nsteps = round(Int, (m.tf - m.t0) / m.dt) + 1
-    delays, samples = DelayHistory{T}[], SampleHistory{T}[]
+    delays, samples, randoms = DelayHistory{T}[], SampleHistory{T}[], RandomHistory[]
     for o in m.operators
         E = prod(_size(o.dims); init = 1)
         if o.op isa FixedDelay
@@ -155,7 +193,9 @@ function _histories(m, ::Type{T}) where {T}
             h = SampleHistory{T}(clock, zeros(T, E), falses(E), T[])
             sizehint!(h.values, (nsteps + 1) * E)
             push!(samples, h)
+        elseif o.op isa RandomDraw
+            push!(randoms, RandomHistory(clock, length(randoms) + 1))
         end
     end
-    return clock, delays, samples
+    return clock, delays, samples, randoms
 end

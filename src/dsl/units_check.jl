@@ -193,6 +193,10 @@ function _ucheck_op(c::UnitCheck, o::Operator, v, src)
         return _all_same(c, [a[1], ui], v, src, "the delayed value and its initial value")
     elseif k === :sample_if_true
         return _all_same(c, [a[2], ui], v, src, "sample_if_true's input and initial value")
+    elseif k === :random_0_1
+        return Unitful.NoUnits
+    elseif k in _RANDOM_KINDS                                       # bounds, mean, spread: one unit
+        return _all_same(c, a, v, src, "$k's bounds, mean and spread")
     end
     return a[1]                                                     # x(t₀)
 end

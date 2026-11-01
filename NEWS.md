@@ -4,6 +4,28 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## Unreleased
+
+### Added
+
+- **RANDOM in models written with `@equations`**: `random_0_1`,
+  `random_uniform`, `random_normal` and `random_exponential`, drawn once per
+  tick and held in between, from a generator seeded from the seed, the call,
+  the element and the tick: every run draws the same, with any solver.
+  `dims = d` draws per element of `d` where the arguments are numbers.
+- **`pysd_not_implemented(name, args...)`**: what PySD's translator writes for
+  a function it does not translate, as Python PySD: the model stops with an
+  error naming it when it evaluates it (before, a placeholder 0.0 or an
+  undefined name).
+
+### Fixed
+
+- **RANDOM NORMAL and RANDOM EXPONENTIAL as Python PySD's** in translated
+  models: `pysd_tick_normal(record, a, b, t)` and `pysd_tick_exponential(record,
+  b, t)` draw truncated (again while outside), where 0.5.0's translations cut
+  the draws at the bounds, and took RANDOM EXPONENTIAL's third argument as its
+  scale (it is the shift; the fourth, the stretch).
+
 ## 0.5.0 (2026-11-01)
 
 ### Added

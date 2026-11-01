@@ -88,3 +88,19 @@ end
     @test Set(names.dt) == Set([:year_met, :drained])        # not slope: of the time alone
     @test names.equals == [:year_met] && names.nonnegative == [:level]
 end
+
+@testset "DSL: RANDOM, one draw per tick, the same with any solver" begin
+    m = _dsl("random")
+    r = run_model(m)
+    @test run_model(m)[:u] == r[:u]                                   # the same in every run
+    @test all(2 .<= r[:u] .< 3) && length(unique(r[:u])) == length(r[:u])
+    @test all(-1 .<= r[:z] .<= 1) && all(1 .<= r[:waits] .<= 5) && all(0 .<= r[:fraction] .< 1)
+    @test all(n[1] != n[2] for n in r[:noise])                        # a draw per element
+    @test r[:noise][1][1] != r[:u][1] - 2                             # each call draws on its own
+    # held between ticks, so a stock of a draw is the same with any solver
+    for (alg, kw) in ((Euler(), (; dt = m.dt / 2)), (RK4(), (;)), (BS3(), (;)))
+        other = run_model(m, alg; kw...)
+        @test other[:u] == r[:u] && other[:noise] == r[:noise]
+        @test other[:stock] ≈ r[:stock] rtol = 1e-12
+    end
+end
