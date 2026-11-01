@@ -76,6 +76,23 @@ compiles the model again for ForwardDiff's numbers; later ones don't.
 `ForwardDiff.gradient` gives the derivatives in several parameters at once,
 for calibration with an optimiser.
 
+### A derivative that comes out NaN
+
+A function whose derivative is infinite where the model takes it, such as
+`sqrt(x)` at `x = 0`, gives ∞ · 0 = NaN when `x` doesn't depend on the
+parameter, although the derivative is 0; the NaN then spreads to the stocks.
+ForwardDiff's NaN-safe mode counts ∞ · 0 as 0:
+
+```julia
+using Preferences, ForwardDiff
+set_preferences!(ForwardDiff, "nansafe_mode" => true)    # then start Julia again
+```
+
+It is saved in the environment's `LocalPreferences.toml`, and makes
+ForwardDiff a little slower.  On a large model where an
+abundance reached exactly zero, it turned NaN derivatives into ones that
+agree with central differences to 10⁻⁸.
+
 ## Uncertainties: Measurements
 
 With [Measurements.jl](https://github.com/JuliaPhysics/Measurements.jl), a

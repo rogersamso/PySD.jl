@@ -16,7 +16,7 @@ These are written inside `@equations`, where they are found without being
 imported.
 
 ```@docs
-excel
+PySD.ExcelSheet
 PySD.constant
 PySD.lookup
 PySD.data
@@ -39,7 +39,7 @@ Results
 SciMLBase.ODEProblem(::Model)
 ```
 
-## Models as packages
+## Precompiling a model
 
 ```@docs
 @precompile_model
@@ -58,7 +58,7 @@ are plain Julia ODE functions or ModelingToolkit systems that call these
 helpers.  Models written with `@equations`, or translated with
 `backend="dsl"`, don't need them.
 
-### Vensim functions
+### Helpers for Vensim functions
 
 | Function | Vensim equivalent |
 |---|---|
