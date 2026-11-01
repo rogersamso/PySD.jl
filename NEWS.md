@@ -4,7 +4,7 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
-## Unreleased
+## 0.5.0 (2026-11-01)
 
 ### Added
 
