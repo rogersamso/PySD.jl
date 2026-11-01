@@ -119,6 +119,7 @@ pysd_fixed_delay
 pysd_sampled
 pysd_tick_time
 pysd_tick_uniform
+pysd_tick_normal(::PySDRecord, ::Any, ::Any, ::Any)
 pysd_record!
 pysd_ticks_callback
 pysd_begin_tick!
