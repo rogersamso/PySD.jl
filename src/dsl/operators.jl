@@ -109,8 +109,22 @@ rates!(d, ::Initial, s, x) = (d[1] = zero(eltype(d)))
 output(::Initial, s, x) = s[1]
 output_args(::Initial) = ()
 
+"""
+RANDOM 0 1, RANDOM UNIFORM, RANDOM NORMAL, RANDOM EXPONENTIAL: one draw per
+step of Δt (the model's ticks), held in between, as Vensim; from a generator
+seeded from the seed, the call, the element and the tick, so that every run
+draws the same, with any solver.  Truncated as Vensim and Python PySD.
+"""
+struct RandomDraw <: HistoryOperator
+    kind::Symbol                  # :random_0_1, :random_uniform, :random_normal, :random_exponential
+    seed::Int
+end
+init_args(::RandomDraw) = ()
+
+const _RANDOM_KINDS = (:random_0_1, :random_uniform, :random_normal, :random_exponential)
+
 # The functions written in equations; `Model` turns their calls into operators.
-const _OPERATOR_NAMES = (:smooth, :delay, :trend, :sample_if_true)
+const _OPERATOR_NAMES = (:smooth, :delay, :trend, :sample_if_true, _RANDOM_KINDS...)
 
 for f in _OPERATOR_NAMES
     @eval $f(args...; kw...) = error($(string(f)) * "(…) can only be used in @equations")

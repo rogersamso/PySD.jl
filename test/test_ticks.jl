@@ -113,6 +113,16 @@ end
     e1, e2 = pysd_tick_normal(PySDRecord(T, 7, 0, 1), 0.0), pysd_tick_normal(PySDRecord(T, 7, 0, 2), 0.0)
     @test e1 != e2 && e1 != pysd_tick_normal(PySDRecord(T, 8, 0, 1), 0.0)
     @test pysd_tick_exponential(PySDRecord(T, 7, 0), 0.0) >= 0
+    # truncated, as Vensim and Python PySD: drawn again while outside
+    zs = [pysd_tick_normal(PySDRecord(T, k, 0), -0.5, 0.25, 0.0) for k in 1:2000]
+    @test all(-0.5 .<= zs .<= 0.25) && length(unique(zs)) > 1900
+    xs = [pysd_tick_exponential(PySDRecord(T, k, 0), 0.3, 0.0) for k in 1:2000]
+    @test all(0 .<= xs .<= 0.3)
+    @test isapprox(sum(xs) / length(xs), (1 - 1.3 * exp(-0.3)) / (1 - exp(-0.3)); atol = 0.01)  # its mean
+end
+
+@testset "Functions the translator does not translate" begin
+    @test_throws "Not implemented function 'VECTOR SELECT'" pysd_not_implemented("VECTOR SELECT", 1.0, [2.0])
 end
 
 @testset "Ticks: few methods for Symbolics" begin
@@ -120,7 +130,7 @@ end
     # not the 19,437 of a sample read with nine arguments (PySD.jl 0.4.0)
     @test length(methods(pysd_sampled)) < 300
     @test length(methods(pysd_fixed_delay)) < 40
-    @test length(methods(pysd_tick_normal)) < 20
+    @test length(methods(pysd_tick_normal)) < 120          # two forms: (record, t), (record, a, b, t)
     # the record reads what the arguments one by one read
     T = PySDTicks(0.0, 0.5)
     pysd_begin_tick!(T, 0.0); pysd_record!(T, 1, [3.0, 4.0]); pysd_end_tick!(T); pysd_free_ticks!(T)

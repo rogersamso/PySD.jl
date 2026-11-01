@@ -595,3 +595,14 @@ function pysd_allocate_available(
     return [_pysd_demand_at_price(request[i], pp[i,1], pp[i,2], pp[i,3], x_star)
             for i in 1:n]
 end
+
+"""
+    pysd_not_implemented(name, args...)
+
+What PySD's translator writes for a Vensim or Stella function it does not
+translate: an error naming it when the model evaluates it, as Python PySD's
+`not_implemented_function` (the translation warns that the model will
+crash).
+"""
+pysd_not_implemented(name::AbstractString, args...) =
+    error("Not implemented function '$name' (PySD's Julia builder does not translate it yet)")

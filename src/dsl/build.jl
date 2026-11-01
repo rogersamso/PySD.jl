@@ -125,11 +125,13 @@ function _model(sets; time, time_unit, saveat = step(time), inputs::NamedTuple =
     structural = Dict{Symbol,Any}()
     for call in r.operators
         op = _make_operator(call, byname, p0, env, inputs, t0, dt)
-        for x in (get(call.kwargs, :order, nothing), call.kind === :fixed_delay ? call.kwargs[:τ] : nothing)
+        for x in (get(call.kwargs, :order, nothing), get(call.kwargs, :seed, nothing),
+                  call.kind === :fixed_delay ? call.kwargs[:τ] : nothing)
             x === nothing || foreach(n -> structural[n] = call.source, _parameters_of(x, byname))
         end
         L.src = call.source
-        dims = _union(call.source, (_shape(a, L) for a in [call.args; [v for (k, v) in call.kwargs if k === :init]])...)
+        dims = _union(call.source, (_shape(a, L) for a in [call.args; [v for (k, v) in call.kwargs if k === :init]])...,
+                      _given_dims(call, L))
         push!(L.opdims, dims)
         n = nstates(op) * prod(_size(dims); init = 1)
         slot = op isa HistoryOperator ? count(o -> typeof(o.op) === typeof(op), ops) + 1 : 0
@@ -342,6 +344,14 @@ function _known(x, k::Known)
     return _known(v.parts[1].rhs, k)
 end
 
+# an operator's dimensions given as `dims = d` or `dims = (d1, d2)` (RANDOM: a
+# draw per element, where its arguments are numbers)
+function _given_dims(call, L)
+    haskey(call.kwargs, :dims) || return ()
+    d = _static_eval(call.kwargs[:dims], L)
+    return d isa Tuple ? d : (d,)
+end
+
 function _make_operator(c::OperatorCall, byname, @nospecialize(p0), @nospecialize(env), @nospecialize(inputs), t0, dt)
     known = Known(byname, p0, env, inputs, t0, dt, c.source)
     sv(x) = _static_value(x, known)
@@ -351,6 +361,7 @@ function _make_operator(c::OperatorCall, byname, @nospecialize(p0), @nospecializ
     k === :trend && return Trend()
     k === :sample_if_true && return SampleIfTrue()
     k === :initial && return Initial()
+    k in _RANDOM_KINDS && return RandomDraw(k, round(Int, sv(get(c.kwargs, :seed, 0))))
     if k === :fixed_delay
         # as Python PySD: at least one step; 0.5 steps round to 1
         τ = sv(c.kwargs[:τ])

@@ -76,6 +76,7 @@ helpers.  Models written with `@equations`, or translated with
 
 ```@docs
 pysd_vector_select
+pysd_not_implemented
 ```
 
 ### Excel and data files

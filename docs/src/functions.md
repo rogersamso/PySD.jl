@@ -117,8 +117,11 @@ investment.
 \text{FORECAST} = \text{input}\left(1 + \text{horizon}\,\frac{\text{input} - A}{T\,A}\right)
 ```
 
-**PySD.jl:** not translated yet.  By hand: `smooth(input, T)` for A, and the
-formula.
+with ``A(t_0) = \text{input}(t_0) / (1 + \text{initial trend})``, as Python PySD.
+
+**PySD.jl:** the translator writes it with a smooth for A:
+`input * (1 + zidz(input - A, T * A) * horizon)`, `A = smooth(input, T; init =
+input / (1 + initial_trend))`.
 
 ### INITIAL
 
@@ -178,7 +181,17 @@ Noise: demand fluctuations, measurement errors, Monte Carlo experiments.
 Vensim draws one number per step and keeps it for the step; the seed makes
 a run repeatable.
 
-**PySD.jl:** not translated yet.
+As Python PySD: RANDOM UNIFORM is uniform on [min, max]; RANDOM NORMAL(min,
+max, mean, sd, seed) a normal truncated to [min, max] (drawn again while
+outside); RANDOM EXPONENTIAL(min, max, shift, stretch, seed) is shift +
+stretch times an exponential, from at least min, truncated at max.
+
+**PySD.jl:** `random_0_1()`, `random_uniform(min, max; seed)`,
+`random_normal(min, max, mean, sd; seed)`, `random_exponential(min, max,
+shift, stretch; seed)`; `dims = d` for a draw per element of `d` where the
+arguments are numbers.  Drawn once per tick from a generator seeded from the
+seed, the call, the element and the tick: held between ticks, and the same
+in every run, with any solver.
 
 ## Switches at given times
 
@@ -330,4 +343,5 @@ lookups written in the model), `lookup(sheet, x, cells)` (`GET XLS LOOKUPS`,
 | `INVERT MATRIX(A)` | `inv(A)` |
 | `GET XLS CONSTANTS`, `GET DIRECT CONSTANTS` | `constant(sheet, cells)` |
 | `ACTIVE INITIAL(x, x0)` (a whole equation) | `x` with the initial value `x0` |
-| `GET TIME VALUE`, `GAME` | not translated yet |
+| `GET TIME VALUE(0, offset, 0)` | `t + offset` |
+| `GAME` | not translated yet |

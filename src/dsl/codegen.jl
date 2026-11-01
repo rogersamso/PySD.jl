@@ -158,6 +158,7 @@ _opstates(o::Operator, u) = o.op isa HistoryOperator ? :(p.$(_histories_of(o.op)
     :(reshape(view($u, $(o.range)), $((nstates(o.op), _size(o.dims)...))))
 _histories_of(::FixedDelay) = :delays
 _histories_of(::SampleIfTrue) = :samples
+_histories_of(::RandomDraw) = :randoms
 
 # the target of an equation for a part: an element or a view
 function _part_target(target, v::Var, p::Part, L::Lowering)

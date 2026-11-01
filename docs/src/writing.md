@@ -79,6 +79,7 @@ with no stock in between.
 | `trend(x, τ; init = r0)` | `TREND` |
 | `x(t - τ; init = x0)` | `DELAY FIXED` |
 | `sample_if_true(c, x; init = x0)` | `SAMPLE IF TRUE` |
+| `random_uniform(lo, hi; seed)`, `random_normal(lo, hi, mean, sd; seed)`, … | `RANDOM UNIFORM`, `RANDOM NORMAL`, … (one draw per step) |
 | `x(t₀)` | `INITIAL` |
 
 The smooths, delays and trends have hidden stocks of their own, which the
