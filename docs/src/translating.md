@@ -62,6 +62,17 @@ default, `:julia`, uses Julia's own functions.
 
 ## Running it
 
+A translated model needs the PySD.jl its translation is written for: the copy
+in PySD's checkout, as a git submodule (the model's package requires that
+version, and `check_compat` warns on load if another is installed):
+
+```julia
+using Pkg
+Pkg.develop(path = "pysd/pysd/builders/julia/PySD.jl")
+```
+
+Then:
+
 ```julia
 using PySD
 m = include("my_model_dsl/my_model.jl")
