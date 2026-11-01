@@ -105,6 +105,23 @@ pysd_check_fixed
 pysd_file
 ```
 
+### Fixed delays and samples
+
+What the ODE and MTK backends write for `DELAY FIXED` and `SAMPLE IF TRUE`:
+records at the model's ticks, which a solver stops at
+([Solvers and the model's ticks](@ref)).
+
+```@docs
+PySDTicks
+pysd_fixed_delay
+pysd_sampled
+pysd_record!
+pysd_ticks_callback
+pysd_begin_tick!
+pysd_reset_ticks!
+pysd_free_ticks!
+```
+
 ### Results and versions
 
 ```@docs

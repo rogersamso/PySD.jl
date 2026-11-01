@@ -4,7 +4,7 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
-## Unreleased
+## 0.4.0 (2026-11-01)
 
 ### Added
 
@@ -38,6 +38,13 @@ and the tests run before it.
 - **A warning names the equations written for Euler steps of Δt** (Δt as a
   value, the time tested for equality, non-negative stocks) when a model is
   solved with any other solver than `Euler()` with `dt = Δt`.
+- **First runs compile faster** (#34): each equation reads the state itself,
+  so the function that calls them is much quicker to compile.  On a large
+  model (about 71,000 states), the initial values, a step and a saved row
+  compile in 113, 38 and 36 s, from 143, 52 and 55 s.
+- **Documentation** (#38), built with Documenter.jl and published at
+  https://rogersamso.github.io/PySD.jl/: the guide, every Vensim function,
+  the reference.
 
 ## 0.3.2 (2026-10-29)
 
