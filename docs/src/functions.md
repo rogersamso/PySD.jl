@@ -288,16 +288,18 @@ the month within a year.
 Working along a dimension: rank technologies by cost, pick the cheapest,
 add up only the selected elements.
 
-**PySD.jl:** not translated yet (helpers for the older backends:
-[`pysd_vector_select`](@ref) and the `pysd_vector_*` functions).
+**PySD.jl:** not translated yet: the model stops with an error naming it
+([`pysd_not_implemented`](@ref)).  Helpers for the older backends:
+[`pysd_vector_select`](@ref) and the `pysd_vector_*` functions.
 
 ### ALLOCATE BY PRIORITY, ALLOCATE AVAILABLE
 
 Sharing a limited supply among users who each ask for an amount, the
 highest priority served first.
 
-**PySD.jl:** not translated yet (helpers for the older backends:
-`pysd_allocate_by_priority`, `pysd_allocate_available`).
+**PySD.jl:** not translated yet: the model stops with an error naming it
+([`pysd_not_implemented`](@ref)).  Helpers for the older backends:
+`pysd_allocate_by_priority`, `pysd_allocate_available`.
 
 ## Plain calculations
 
@@ -342,6 +344,6 @@ lookups written in the model), `lookup(sheet, x, cells)` (`GET XLS LOOKUPS`,
 | `= <> < <= > >=`, `:AND:`, `:OR:`, `:NOT:` | `== != < <= > >=`, `&`, `\|`, `!` |
 | `INVERT MATRIX(A)` | `inv(A)` |
 | `GET XLS CONSTANTS`, `GET DIRECT CONSTANTS` | `constant(sheet, cells)` |
-| `ACTIVE INITIAL(x, x0)` (a whole equation) | `x` with the initial value `x0` |
+| `ACTIVE INITIAL(x, x0)` | `x`, with the initial value `x0` (inside an expression, a variable of its own) |
 | `GET TIME VALUE(0, offset, 0)` | `t + offset` |
-| `GAME` | not translated yet |
+| `GAME` | not translated yet (the model stops with an error naming it) |

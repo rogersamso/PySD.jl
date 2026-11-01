@@ -7,12 +7,18 @@ run, changed, and kept in version control.
 
 ## The translator
 
-The builder is not in a PySD release yet.  It is on the `exp/julia-dsl`
-branch of [rogersamso/pysd](https://github.com/rogersamso/pysd/tree/exp/julia-dsl):
+The builder is part of [PySD](https://github.com/SDXorg/pysd):
 
 ```sh
-git clone -b exp/julia-dsl https://github.com/rogersamso/pysd.git
-pip install -e pysd
+pip install pysd
+```
+
+The DSL backend (`backend="dsl"`) comes with the PySD release that includes
+[SDXorg/pysd#526](https://github.com/SDXorg/pysd/pull/526).  Until then,
+install PySD from that pull request:
+
+```sh
+pip install "pysd @ git+https://github.com/SDXorg/pysd.git@refs/pull/526/head"
 ```
 
 ```python
@@ -62,13 +68,13 @@ default, `:julia`, uses Julia's own functions.
 
 ## Running it
 
-A translated model needs the PySD.jl its translation is written for: the copy
-in PySD's checkout, as a git submodule (the model's package requires that
-version, and `check_compat` warns on load if another is installed):
+A translated model needs the PySD.jl release its translation is written for:
+the model's package names it (`[compat]` in its `Project.toml`), and
+`check_compat` warns on load if another is installed.  Install PySD.jl as on
+the [Home](@ref "PySD.jl") page, and check that release out:
 
-```julia
-using Pkg
-Pkg.develop(path = "pysd/pysd/builders/julia/PySD.jl")
+```sh
+cd ~/.julia/dev/PySD && git checkout v0.6.0      # the version in [compat]
 ```
 
 Then:
@@ -112,13 +118,27 @@ eu = run_model(europe; inputs = (; parents = (w,)))
 
 ## What isn't translated yet
 
-The translator stops with an error naming the equation for:
+**Functions.**  For these the translation finishes with a warning, and writes
+`pysd_not_implemented("NAME", …)`: the model stops with an error naming the
+function when it evaluates it, as Python PySD's translations do.
 
-- `FORECAST`;
-- the `RANDOM` functions;
 - `VECTOR SELECT`, `VECTOR RANK`, `VECTOR SORT ORDER`, `VECTOR REORDER`;
 - `ALLOCATE BY PRIORITY`, `ALLOCATE AVAILABLE`;
-- `GET TIME VALUE`;
-- `ACTIVE INITIAL` inside an expression (on its own, it is translated).
+- `GAME`;
+- `GET TIME VALUE` other than `GET TIME VALUE(0, offset, 0)` (the time plus an
+  offset, which is translated).
+
+**Constructs.**  For these the translation stops with an error naming the
+equation:
+
+- macros (`:MACRO:` … `:END OF MACRO:`);
+- `INITIAL` of an expression (`INITIAL` of a variable is translated);
+- time settings that are expressions (a `FINAL TIME` that depends on a
+  variable);
+- some subscript forms: a subscript used as a value in a conditional
+  subscript, `:EXCEPT:` narrower at several positions, `ELMCOUNT` of a copy of
+  a range, a subscript range read from Excel.
 
 [Vensim functions](@ref) lists every function with its form in PySD.jl.
+PySD's reference tests list the test models still known to fail, with the
+reason (`KNOWN_FAILURES` in `tests/pytest_builders/pytest_julia_reference.py`).
