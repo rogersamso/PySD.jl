@@ -17,6 +17,13 @@ and the tests run before it.
 - **Switches on the time exact at the ticks, in translated models**
   (`pysd_tick_time`), as in models written with `@equations` since 0.4.0.
 
+### Changed
+
+- **The warning for equations written for Euler steps of Δt names fewer**:
+  not an equation that depends on the time alone (parameters, data series,
+  lookups, and fixed delays or samples of them), such as a finite difference
+  of data, `(data(t + Δt) - data(t)) / Δt`, the same with any solver.
+
 ### Fixed
 
 - **PySD compiles in 40 s again** (about 7 min with 0.4.0).  The functions
@@ -25,6 +32,8 @@ and the tests run before it.
   arguments: 19,437 for `pysd_sampled`.  The record they read is now one
   argument, `PySDRecord(ticks, key, n, I...)` (163 methods).  The calls of
   0.4.0 still work in ODE models.
+- **Runs on several threads at once** (a sweep, an ensemble): the input
+  sheets the runs read are cached behind a lock.  Tested with two threads.
 
 ## 0.4.0 (2026-11-01)
 

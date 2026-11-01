@@ -418,6 +418,7 @@ include("test_numpy_order.jl")
 include("test_number_types.jl")
 include("test_dsl.jl")
 include("test_sciml.jl")
+include("test_threads.jl")
 include("test_ticks.jl")
 
 @testset "out of the domain: NaN, as numpy" begin

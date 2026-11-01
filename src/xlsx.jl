@@ -26,10 +26,13 @@ end
 
 const _XLSX_CACHE = Dict{String, XLSX.XLSXFile}()
 const _SHEET_CACHE = Dict{Tuple{String, String}, _Sheet}()
+# (runs on several threads may read input sheets at once: one at a time here;
+# reentrant, as a sheet opens its file)
+const _CACHE_LOCK = ReentrantLock()
 
 function _xlsx_open(path::String)
     p = abspath(path)
-    get!(() -> XLSX.readxlsx(p), _XLSX_CACHE, p)
+    lock(() -> get!(() -> XLSX.readxlsx(p), _XLSX_CACHE, p), _CACHE_LOCK)
 end
 
 _file_ext(path::AbstractString) = lowercase(splitext(path)[2])
@@ -37,13 +40,15 @@ _is_xlsx(path::AbstractString) = _file_ext(path) in (".xlsx", ".xlsm")
 
 function _open_sheet(path::String, sheet::String)
     p = abspath(path)
-    get!(_SHEET_CACHE, (p, sheet)) do
-        if _is_xlsx(p)
-            _XLSXSheet(_xlsx_open(p)[sheet])
-        elseif _file_ext(p) == ".xls"
-            _GridSheet(_xls_grid(p, sheet))
-        else
-            _GridSheet(_text_grid(p, sheet))
+    lock(_CACHE_LOCK) do
+        get!(_SHEET_CACHE, (p, sheet)) do
+            if _is_xlsx(p)
+                _XLSXSheet(_xlsx_open(p)[sheet])
+            elseif _file_ext(p) == ".xls"
+                _GridSheet(_xls_grid(p, sheet))
+            else
+                _GridSheet(_text_grid(p, sheet))
+            end
         end
     end
 end
