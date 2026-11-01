@@ -96,3 +96,34 @@ end
     # the stock at 3.5, a step after the orders arrive (as the DSL's clock example)
     @test exact.u[8][1] ≈ 0.4424 atol = 1e-4
 end
+
+@testset "Ticks: RANDOM, one draw per tick, the same in every run" begin
+    T = PySDTicks(0.0, 0.5)
+    draw(t) = pysd_tick_uniform(PySDRecord(T, 7, 0), t)
+    a = [draw(t) for t in 0:0.5:2]
+    @test all(0 .<= a .< 1) && length(unique(a)) == length(a)
+    # held between ticks, and the same each time it is asked
+    @test draw(0.7) == draw(0.5) == a[2] && draw(0.99) == a[2]
+    @test [draw(t) for t in 0:0.5:2] == a
+    # while a solver runs, the tick is the count: a step ending at the next tick still has this one's
+    T.tick = 1
+    @test draw(1.0) == a[2]
+    T.tick = -1
+    # each element, and each stream, draws on its own
+    e1, e2 = pysd_tick_normal(PySDRecord(T, 7, 0, 1), 0.0), pysd_tick_normal(PySDRecord(T, 7, 0, 2), 0.0)
+    @test e1 != e2 && e1 != pysd_tick_normal(PySDRecord(T, 8, 0, 1), 0.0)
+    @test pysd_tick_exponential(PySDRecord(T, 7, 0), 0.0) >= 0
+end
+
+@testset "Ticks: few methods for Symbolics" begin
+    # one record argument and the symbolic inputs: 3ⁿ methods for n arguments,
+    # not the 19,437 of a sample read with nine arguments (PySD.jl 0.4.0)
+    @test length(methods(pysd_sampled)) < 300
+    @test length(methods(pysd_fixed_delay)) < 40
+    @test length(methods(pysd_tick_normal)) < 20
+    # the record reads what the arguments one by one read
+    T = PySDTicks(0.0, 0.5)
+    pysd_begin_tick!(T, 0.0); pysd_record!(T, 1, [3.0, 4.0]); pysd_end_tick!(T); pysd_free_ticks!(T)
+    @test pysd_fixed_delay(PySDRecord(T, 1, 0, 2), 9.0, 0.2) == pysd_fixed_delay(T, 1, 0, 9.0, 0.2, 2) == 4.0
+    @test pysd_sampled(PySDRecord(T, 1, 0, 1), false, 0.0, 0.0, 0.2) == 3.0
+end
