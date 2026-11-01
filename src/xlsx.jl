@@ -73,8 +73,12 @@ function _text_grid(path::String, sheet::String)
     return readdlm(IOBuffer(replace(content, r"\r\n?" => "\n")), delim, Any)
 end
 
+# (XLSX.jl reads a worksheet's cells on first use, filling a cache of its own:
+# one thread at a time)
 function _cells(s::_XLSXSheet, r1::Int, c1::Int, r2::Int, c2::Int)
-    data = s.ws[XLSX.CellRange(XLSX.CellRef(r1, c1), XLSX.CellRef(r2, c2))]
+    data = lock(_CACHE_LOCK) do
+        s.ws[XLSX.CellRange(XLSX.CellRef(r1, c1), XLSX.CellRef(r2, c2))]
+    end
     return data isa AbstractMatrix ? data : reshape(Any[data], 1, 1)
 end
 
@@ -84,7 +88,7 @@ function _cells(s::_GridSheet, r1::Int, c1::Int, r2::Int, c2::Int)
 end
 
 function _lastcell(s::_XLSXSheet)
-    stop = XLSX.get_dimension(s.ws).stop
+    stop = lock(() -> XLSX.get_dimension(s.ws).stop, _CACHE_LOCK)
     return stop.row_number, stop.column_number
 end
 
