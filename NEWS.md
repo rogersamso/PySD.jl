@@ -4,6 +4,11 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## 0.6.1 (2026-11-02)
+
+Documentation only (#46): install the translator from PySD (not a fork), and
+what isn't translated yet, as of 0.6.0.  The code is the same as 0.6.0.
+
 ## 0.6.0 (2026-11-01)
 
 ### Added
