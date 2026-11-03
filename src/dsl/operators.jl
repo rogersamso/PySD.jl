@@ -168,6 +168,167 @@ function previous(x::AbstractDimArray, d)
     return y
 end
 
+# --- Vensim's VECTOR functions --------------------------------------------------
+#
+# Along one dimension, as Vensim and Python PySD: positions are 0-based (the
+# first element is 0), as numbers.  The DimArray methods here are for code
+# outside @equations; inside, the lowering (lower.jl) calls the same kernels on
+# plain arrays.
+
+_overname(d) = d isa Symbol ? d : DimensionalData.name(d)
+
+"""
+    vector_sort_order(x, direction, d)
+
+Vensim's `VECTOR SORT ORDER` along dimension `d`: at each position, the
+position (0-based) along `d` of the element that goes there when the elements
+are sorted, smallest first if `direction > 0`, else largest first.
+"""
+function vector_sort_order(x::AbstractDimArray, direction, d)
+    w = similar(x, Float64)
+    _slices_along!(_sort_order!, parent(w), (parent(x),), Val(DimensionalData.dimnum(x, _overname(d))), direction)
+    return w
+end
+
+"""
+    vector_rank(x, direction, d)
+
+Vensim's `VECTOR RANK` along dimension `d`: the rank of each element (1 for the
+smallest if `direction > 0`, for the largest otherwise).
+"""
+function vector_rank(x::AbstractDimArray, direction, d)
+    w = similar(x, Float64)
+    _slices_along!(_rank!, parent(w), (parent(x),), Val(DimensionalData.dimnum(x, _overname(d))), direction)
+    return w
+end
+
+"""
+    vector_reorder(x, order, d)
+
+Vensim's `VECTOR REORDER` along dimension `d`: the element at position `i` is
+the one of `x` at position `order[i]` (0-based, as `vector_sort_order` gives).
+`x` and `order` have the same dimensions.
+"""
+function vector_reorder(x::AbstractDimArray, order::AbstractDimArray, d)
+    DimensionalData.dims(order) == DimensionalData.dims(x) ||
+        throw(DimensionMismatch("vector_reorder: `order` needs the dimensions of `x`"))
+    w = similar(x)
+    _slices_along!(_reorder!, parent(w), (parent(x), parent(order)), Val(DimensionalData.dimnum(x, _overname(d))))
+    return w
+end
+
+"""
+    vector_select(selection, x, over, missing, action, error)
+
+Vensim's `VECTOR SELECT`, over dimension `over` (or a tuple of them; Vensim's
+`!` subscripts), which the result no longer has: the elements of `x` where
+`selection` is not zero, combined by `action` (0 sum of selection·x, 1 product
+of selection·x, 2 minimum, 3 maximum, 4 mean of selection·x, 5 product of
+x^selection, 6 sum, 7 product, 8 minimum, 9 maximum, 10 mean of x); `missing`
+where `selection` is all zeros.  `error` 1 (or 3) stops the model when
+`selection` is all zeros, 2 (or 3) when it has more than one non-zero.
+`selection` and `x` line up by dimension name.
+"""
+function vector_select(sel::AbstractDimArray, x::AbstractDimArray, over, missing_vals, action, err)
+    S = DimensionalData.broadcast_dims((a, b) -> a, sel, x)
+    E = DimensionalData.broadcast_dims((a, b) -> b, sel, x)
+    names = over isa Tuple ? map(_overname, over) : (_overname(over),)
+    ks = Tuple(DimensionalData.dimnum(S, n) for n in names)
+    kept = Tuple(d for (i, d) in enumerate(DimensionalData.dims(S)) if !(i in ks))
+    isempty(kept) && return pysd_vector_select(parent(S), parent(E), missing_vals, action, err)
+    w = DimArray(zeros(promote_type(eltype(S), eltype(E), Float64), map(length, kept)), kept)
+    _vector_select!(parent(w), parent(S), parent(E), Val(ks), missing_vals, action, err)
+    return w
+end
+
+"""
+    allocate_by_priority(request, priority, width, supply, d)
+
+Vensim's `ALLOCATE BY PRIORITY` along dimension `d`: `supply` shared among the
+elements of `request` along `d`, the highest `priority` first, with priorities
+within `width` of each other served together.  `width` and `supply` may vary
+over the other dimensions (not over `d`).
+"""
+function allocate_by_priority(request::AbstractDimArray, priority, width, supply, d)
+    R, P, W, S = _spread(request, priority, width, supply)
+    w = similar(R, Float64)
+    _slices_along!(_allocate_priority!, parent(w), (parent(R), parent(P), parent(W), parent(S)),
+                   Val(DimensionalData.dimnum(R, _overname(d))))
+    return w
+end
+
+"""
+    allocate_available(request, profiles, supply, d, p)
+
+Vensim's `ALLOCATE AVAILABLE` along dimension `d`: `supply` shared among the
+elements of `request` by their priority profiles, `profiles` over `d` and
+the profile dimension `p` (type, priority, width, extra; Vensim's `pprofile`).
+"""
+function allocate_available(request::AbstractDimArray, profiles::AbstractDimArray, supply, d, p)
+    pd = DimensionalData.dims(profiles, _overname(p))
+    others = Tuple(x for x in DimensionalData.dims(profiles) if DimensionalData.name(x) !== _overname(p))
+    flat = DimArray(zeros(map(length, others)), others)
+    R, _, S = _spread(request, flat, supply)
+    PP = DimensionalData.broadcast_dims((a, b) -> b, DimArray(zeros(size(R)..., length(pd)),
+                                        (DimensionalData.dims(R)..., pd)), profiles)
+    PP = permutedims(PP, (DimensionalData.dims(R)..., pd))
+    w = similar(R, Float64)
+    _allocate_available!(parent(w), parent(R), parent(PP), parent(S), Val(DimensionalData.dimnum(R, _overname(d))))
+    return w
+end
+
+# arrays and numbers laid out alike, over all their dimensions
+function _spread(xs...)
+    arrays = [x for x in xs if x isa AbstractDimArray]
+    template = DimensionalData.broadcast_dims((a...) -> 0.0, arrays...)
+    return map(x -> DimensionalData.broadcast_dims((a, b) -> b, template, x isa AbstractDimArray ? x : DimArray(fill(float(x)), ())), xs)
+end
+
+_allocate_priority!(w, r, p, width, supply) =
+    (w .= pysd_allocate_by_priority(r, p, width[firstindex(width)], supply[firstindex(supply)]); w)
+
+# ALLOCATE AVAILABLE on each slice along dimension k; pp has the profile
+# dimension after the others
+function _allocate_available!(w, r, pp, supply, ::Val{k}) where {k}
+    N = ndims(w)
+    for I in CartesianIndices(ntuple(i -> i == k ? 1 : size(w, i), N))
+        sel = ntuple(i -> i == k ? Colon() : I[i], N)
+        s = view(supply, sel...)
+        view(w, sel...) .= pysd_allocate_available(view(r, sel...), view(pp, sel..., :), s[firstindex(s)])
+    end
+    return w
+end
+
+# f!(w, sources..., args...) on each slice along dimension k
+function _slices_along!(f!, w, srcs::Tuple, ::Val{k}, args...) where {k}
+    N = ndims(w)
+    for I in CartesianIndices(ntuple(i -> i == k ? 1 : size(w, i), N))
+        sel = ntuple(i -> i == k ? Colon() : I[i], N)
+        f!(view(w, sel...), map(s -> view(s, sel...), srcs)..., args...)
+    end
+    return w
+end
+_sort_order!(w, v, direction) = (w .= pysd_vector_sort_order(v, direction); w)
+_rank!(w, v, direction) = (w .= pysd_vector_rank(v, direction); w)
+function _reorder!(w, v, order)
+    for i in eachindex(w, order)
+        w[i] = v[firstindex(v) + round(Int, order[i])]
+    end
+    return w
+end
+
+# VECTOR SELECT over the dimensions at positions ks of sel and x (laid out
+# alike): w has the other dimensions, in the same order
+function _vector_select!(w, sel, x, ::Val{ks}, missing_vals, action, err) where {ks}
+    N = ndims(sel)
+    kept = Tuple(i for i in 1:N if !(i in ks))
+    for J in CartesianIndices(w)
+        idx = ntuple(i -> i in ks ? Colon() : J[findfirst(==(i), kept)], N)
+        w[J] = pysd_vector_select(view(sel, idx...), view(x, idx...), missing_vals, action, err)
+    end
+    return w
+end
+
 "A lookup given by its points: piecewise linear, constant outside them."
 struct PiecewiseLinear
     x::Vector{Float64}

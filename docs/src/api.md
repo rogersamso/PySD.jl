@@ -29,6 +29,12 @@ PySD.piecewise_linear
 ```@docs
 PySD.sum_over
 PySD.previous
+PySD.vector_sort_order
+PySD.vector_rank
+PySD.vector_reorder
+PySD.vector_select
+PySD.allocate_by_priority
+PySD.allocate_available
 ```
 
 ## Running and results

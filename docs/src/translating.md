@@ -118,19 +118,16 @@ eu = run_model(europe; inputs = (; parents = (w,)))
 
 ## What isn't translated yet
 
-**Functions.**  For these the translation finishes with a warning, and writes
-`pysd_not_implemented("NAME", …)`: the model stops with an error naming the
-function when it evaluates it, as Python PySD's translations do.
-
-- `VECTOR SELECT`, `VECTOR RANK`, `VECTOR SORT ORDER`, `VECTOR REORDER`;
-- `ALLOCATE BY PRIORITY`, `ALLOCATE AVAILABLE`;
-- `GAME`;
-- `GET TIME VALUE` other than `GET TIME VALUE(0, offset, 0)` (the time plus an
-  offset, which is translated).
+**Functions it does not know** (as `LOOKUP FORWARD`): the translation
+finishes with a warning, and writes `pysd_not_implemented("NAME", …)`: the
+model stops with an error naming the function when it evaluates it, as
+Python PySD's translations do.
 
 **Constructs.**  For these the translation stops with an error naming the
 equation:
 
+- `GET TIME VALUE` other than `GET TIME VALUE(0, offset, 0)` (the time plus an
+  offset, which is translated);
 - macros (`:MACRO:` … `:END OF MACRO:`);
 - `INITIAL` of an expression (`INITIAL` of a variable is translated);
 - time settings that are expressions (a `FINAL TIME` that depends on a

@@ -211,8 +211,11 @@ function _with_dims(c::SeriesCells, dims::Tuple)
     a = permutedims(reshape(s, reverse(sz)), reverse(1:length(sz)))
     return LookupArray(DimArray(a, dims))
 end
-# one block of cells per element of the first dimension
-function _with_dims(cs::AbstractVector{SeriesCells}, dims::Tuple)
+# one block of cells per element of the first dimension (or a vector of them,
+# per element of the first two, and so on)
+const _Blocks = Union{AbstractVector{SeriesCells}, AbstractVector{<:AbstractVector{SeriesCells}},
+                     AbstractVector{<:AbstractVector{<:AbstractVector{SeriesCells}}}}
+function _with_dims(cs::_Blocks, dims::Tuple)
     length(cs) == length(first(dims)) || error("$(length(cs)) blocks of cells for $(length(first(dims))) elements")
     rest = Base.tail(dims)
     isempty(rest) && return LookupArray(DimArray([only(_read(c, 1)) for c in cs], dims))  # one series each
@@ -230,5 +233,5 @@ _callf(f, x) = f(x)
 # called where values are computed once (constants): an array of the series' values
 (f::LookupArray)(x::Number) = map(s -> s(x), f.series)
 (f::LookupArray)(x::AbstractDimArray) = _bc(_callf, f.series, x)
-_with_dims(cs::AbstractVector{SeriesCells}, ::Tuple{}) = error("several blocks of cells where the declaration has no dimensions")
+_with_dims(cs::_Blocks, ::Tuple{}) = error("several blocks of cells where the declaration has no dimensions")
 _with_dims(f::LookupArray, ::Tuple{}) = error("series with dimensions where the declaration has none")

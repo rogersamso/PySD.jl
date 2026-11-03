@@ -294,6 +294,8 @@ raises when `sel` is all zeros, 2 (or 3) when it has more than one non-zero.
 `sel` and `expr` are broadcast together (e.g. a matrix and a vector).
 """
 function pysd_vector_select(sel, expr, missing_vals, numerical_action, error_action)
+    any(_symbolic, (sel, expr, missing_vals, numerical_action)) &&
+        return _vector_select_symbolic(sel, expr, missing_vals, numerical_action)
     S = sel .+ zero.(expr)
     E = expr .+ zero.(sel)
     nz = S .!= 0
@@ -321,6 +323,39 @@ function pysd_vector_select(sel, expr, missing_vals, numerical_action, error_act
     return Float64(sum(vals) / length(vals))
 end
 
+# VECTOR SELECT with symbolic values: the selected elements as ifelse (as
+# numbers when the selection is numbers), every action as ifelse only if the
+# action changes with time; the error actions need the values, and are not
+# checked
+function _vector_select_symbolic(sel, expr, missing_vals, action)
+    S = vec(collect(sel .+ zero.(expr)))
+    E = vec(collect(expr .+ zero.(sel)))
+    # which elements are selected: known without the values if the selection is numbers
+    nz = _symbolic(sel) ? [s != 0 for s in S] : vec(collect(broadcast((s, _) -> s != 0, sel, expr)))
+    count = sum(ifelse(z, 1, 0) for z in nz)
+    total(v) = sum(ifelse(nz[i], v[i], 0) for i in eachindex(v))
+    product(v) = prod(ifelse(nz[i], v[i], 1) for i in eachindex(v))
+    smallest(v) = minimum(ifelse(nz[i], v[i], Inf) for i in eachindex(v))
+    largest(v) = maximum(ifelse(nz[i], v[i], -Inf) for i in eachindex(v))
+    function by_action(k)
+        v = k <= 4 ? S .* E : k == 5 ? E .^ S : E
+        k in (0, 6) && return total(v)
+        k in (1, 5, 7) && return product(v)
+        k in (2, 8) && return smallest(v)
+        k in (3, 9) && return largest(v)
+        return total(v) / count
+    end
+    if action isa Num                     # an action that changes: all of them
+        out = by_action(10)
+        for k in 9:-1:0
+            out = ifelse(action == k, by_action(k), out)
+        end
+    else
+        out = by_action(Int(action))
+    end
+    return ifelse(count == 0, missing_vals, out)
+end
+
 pysd_vector_sort_order(vec, dir) =
     Float64.(ifelse(dir > 0, sortperm(vec), sortperm(vec, rev=true)) .- 1)
 
@@ -328,6 +363,32 @@ pysd_vector_reorder(vec, order) = vec[Int.(order) .+ 1]
 
 pysd_vector_rank(vec, dir) =
     Float64.(invperm(ifelse(dir > 0, sortperm(vec), sortperm(vec, rev=true))))
+
+# The same with symbolic values (ModelingToolkit builds its equations by
+# calling these with them): no sorting, which needs the values, but
+# comparisons, as ifelse.  The rank of element i counts the elements before it
+# in the order (smaller, or larger, and the equal ones before i: a stable sort,
+# as sortperm); n² comparisons, for the vectors of a model.
+_symbolic(x) = x isa Num || (x isa AbstractArray && eltype(x) <: Num)
+
+function pysd_vector_rank(vec::AbstractVector{Num}, dir)
+    v = collect(vec)
+    n = length(v)
+    before(i, j) = ifelse(dir > 0, v[j] < v[i], v[j] > v[i])
+    return [1 + sum((ifelse(before(i, j), 1, 0) + (j < i ? ifelse(v[j] == v[i], 1, 0) : 0)
+                     for j in 1:n if j != i); init = 0) for i in 1:n]
+end
+
+function pysd_vector_sort_order(vec::AbstractVector{Num}, dir)
+    r = pysd_vector_rank(vec, dir)
+    n = length(r)
+    return [sum(ifelse(r[i] == p, i - 1, 0) for i in 1:n) for p in 1:n]
+end
+
+function pysd_vector_reorder(vec::AbstractVector, order::AbstractVector{Num})
+    n = length(order)
+    return [sum(ifelse(order[p] == j - 1, vec[j], 0) for j in 1:n) for p in 1:n]
+end
 
 pysd_get_time_value(t_now, lookup_fn, lo, hi) =
     lookup_fn(clamp(t_now, lo, hi))
