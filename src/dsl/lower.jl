@@ -132,8 +132,23 @@ function _shape(x, L::Lowering)
             return s
         elseif f === DimensionalData.set
             return _renamed(_shape(args[1], L), _static_eval.(args[2:end], Ref(L)))
-        elseif f === previous
+        elseif f === previous || f === vector_sort_order || f === vector_rank
             return _shape(args[1], L)
+        elseif f === vector_reorder
+            return _union(L.src, _shape(args[1], L), _shape(args[2], L))
+        elseif f === allocate_by_priority
+            return _union(L.src, (_shape(a, L) for a in args[1:4])...)
+        elseif f === allocate_available
+            return _allocate_layout(args, L)[1]
+        elseif f === vector_select
+            s = _union(L.src, _shape(args[1], L), _shape(args[2], L))
+            d = _static_eval(args[3], L)
+            for e in (d isa Tuple ? d : (d,))
+                _hasname(_overname(e), s) ||
+                    error("$(_where(L.src)): vector_select over `$(_overname(e))`, which $(_dimstr(s)) hasn't")
+                s = _without(s, _overname(e))
+            end
+            return s
         elseif f === LinearAlgebra.inv
             s = _shape(args[1], L)
             length(s) == 2 || error("$(_where(L.src)): inv of an array of $(length(s)) dimensions")
@@ -300,7 +315,9 @@ function _emit(x, @nospecialize(T), L::Lowering)
         return _dotcall(_python(_emit(args[1], (), L), L.numerics), _emit_all(args[2:end], T, L))
     elseif f === DimensionalData.set
         return _emit_renamed(x, T, L)
-    elseif haskey(_REDUCTIONS, f) || f === previous || f === LinearAlgebra.inv ||
+    elseif f === vector_select && isempty(shape)
+        return _vector_select_all(args, L)
+    elseif haskey(_REDUCTIONS, f) || f === previous || f === LinearAlgebra.inv || f in _VECTOR_FUNCTIONS ||
            (f in (:+, :-) && length(args) == 2 && (_isI(args[1]) || _isI(args[2]))) ||
            (f === :* && length(args) == 2 && !isempty(_shape(args[1], L)) && !isempty(_shape(args[2], L)))
         return _emit_materialized(x, shape, T, L)
@@ -360,6 +377,29 @@ function _materialize(x, @nospecialize(S), L)
         d = _static_eval(args[2], L)
         k = _findname(_dname(d), _dimvec(Sx))
         push!(L.pre, :($_previous!($w, $(_source(args[1], Sx, L)), $(Val(k)))))
+    elseif f === vector_sort_order || f === vector_rank
+        k = _dimpos(args[3], S, L)
+        kernel = f === vector_sort_order ? _sort_order! : _rank!
+        src = _source(args[1], S, L)
+        push!(L.pre, :($_slices_along!($kernel, $w, ($src,), $(Val(k)), $(_emit(args[2], (), L)))))
+    elseif f === vector_reorder
+        k = _dimpos(args[3], S, L)
+        a, b = _materialize_as(args[1], S, L), _materialize_as(args[2], S, L)
+        push!(L.pre, :($_slices_along!($_reorder!, $w, ($a, $b), $(Val(k)))))
+    elseif f === allocate_by_priority
+        k = _dimpos(args[5], S, L)
+        srcs = [_materialize_as(a, S, L) for a in args[1:4]]
+        push!(L.pre, :($_slices_along!($_allocate_priority!, $w, ($(srcs...),), $(Val(k)))))
+    elseif f === allocate_available
+        _, P = _allocate_layout(args, L)
+        k = _dimpos(args[4], S, L)
+        r, pp, sp = _materialize_as(args[1], S, L), _materialize_as(args[2], P, L), _materialize_as(args[3], S, L)
+        push!(L.pre, :($_allocate_available!($w, $r, $pp, $sp, $(Val(k)))))
+    elseif f === vector_select
+        U, ks = _select_layout(args, L)
+        a, b = _materialize_as(args[1], U, L), _materialize_as(args[2], U, L)
+        rest = _emit_all(args[4:6], (), L)
+        push!(L.pre, :($_vector_select!($w, $a, $b, $(Val(ks)), $(rest...))))
     elseif f === LinearAlgebra.inv
         Sx = _shape(args[1], L)
         inv_ = L.numerics === :python ? _numpy_inv : LinearAlgebra.inv
@@ -419,6 +459,46 @@ function _nested_reduction(x, shape, L)
         y = Expr(:call, x.args[1], y, e)
     end
     return y
+end
+
+const _VECTOR_FUNCTIONS = (vector_sort_order, vector_rank, vector_reorder, vector_select,
+                           allocate_by_priority, allocate_available)
+
+# ALLOCATE AVAILABLE: the dimensions of the result (the request's, the
+# profiles' other than the profile dimension, the supply's), and those the
+# profiles are laid out in (the same, then the profile dimension)
+function _allocate_layout(args, L)
+    p = _overname(_static_eval(args[5], L))
+    Sp = _shape(args[2], L)
+    k = _findname(p, _dimvec(Sp))
+    k === nothing && error("$(_where(L.src)): allocate_available: the profiles have no dimension `$p`")
+    S = _union(L.src, _shape(args[1], L), _without(Sp, p), _shape(args[3], L))
+    return S, Tuple([_dimvec(S); _dimvec(Sp)[k]])
+end
+
+# the position of dimension `d` (an argument) in the dimensions S
+function _dimpos(d, @nospecialize(S), L)
+    n = _overname(_static_eval(d, L))
+    k = _findname(n, _dimvec(S))
+    k === nothing && error("$(_where(L.src)): no dimension `$n` in $(_dimstr(S))")
+    return k
+end
+
+# VECTOR SELECT: the dimensions its two arrays are laid out in, and the
+# positions of those it is over
+function _select_layout(args, L)
+    U = _union(L.src, _shape(args[1], L), _shape(args[2], L))
+    d = _static_eval(args[3], L)
+    ks = Tuple(_findname(_overname(e), _dimvec(U)) for e in (d isa Tuple ? d : (d,)))
+    return U, ks
+end
+
+# VECTOR SELECT over all the dimensions: a number
+function _vector_select_all(args, L)
+    U, _ = _select_layout(args, L)
+    isempty(U) && return Expr(:call, pysd_vector_select, _emit(args[1], (), L), _emit(args[2], (), L), _emit_all(args[4:6], (), L)...)
+    a, b = _materialize_as(args[1], U, L), _materialize_as(args[2], U, L)
+    return Expr(:call, pysd_vector_select, a, b, _emit_all(args[4:6], (), L)...)
 end
 
 function _previous!(w, x, ::Val{k}) where {k}

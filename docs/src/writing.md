@@ -156,7 +156,10 @@ r[:population][end]
   `Not(At(…))` for the rest.  The parts can't overlap: `Model` says which
   equations do.
 - `sum_over(x, d)`, `prod_over`, `maximum_over`, `minimum_over` reduce over
-  a dimension (Vensim's `SUM(x[d!])`); `previous(x, d)` shifts along one.
+  a dimension (Vensim's `SUM(x[d!])`); `previous(x, d)` shifts along one;
+  `vector_sort_order`, `vector_rank`, `vector_reorder` and `vector_select`
+  are Vensim's VECTOR functions, `allocate_by_priority` and
+  `allocate_available` its ALLOCATE functions ([Vensim functions](@ref)).
 - Matrices are matrices: `inv(I - A)`, `A * v`.
 
 ## Components

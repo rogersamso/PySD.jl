@@ -29,6 +29,9 @@ Base.show(io::IO, r::OpRef) = print(io, "op", r.k)
 const _BUILTINS = Dict{Symbol,Any}(
     :sum_over => sum_over, :maximum_over => maximum_over, :minimum_over => minimum_over,
     :prod_over => prod_over, :previous => previous, :piecewise_linear => piecewise_linear,
+    :vector_sort_order => vector_sort_order, :vector_rank => vector_rank,
+    :vector_reorder => vector_reorder, :vector_select => vector_select,
+    :allocate_by_priority => allocate_by_priority, :allocate_available => allocate_available,
     :zidz => pysd_zidz, :xidz => pysd_xidz,
     :At => DimensionalData.At, :Not => DimensionalData.Not, :set => DimensionalData.set,
     :I => LinearAlgebra.I, :inv => LinearAlgebra.inv,

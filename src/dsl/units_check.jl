@@ -166,6 +166,16 @@ function _ucheck(c::UnitCheck, x, v, src)
         return q
     elseif f === sum_over || f === maximum_over || f === minimum_over || f === previous || f === DimensionalData.set
         return _ucheck(c, args[1], v, src)
+    elseif f === vector_sort_order || f === vector_rank                # positions
+        _ucheck(c, args[1], v, src)
+        return Unitful.NoUnits
+    elseif f === vector_reorder
+        _ucheck(c, args[2], v, src)
+        return _ucheck(c, args[1], v, src)
+    elseif f === allocate_by_priority || f === allocate_available     # shares of the request
+        foreach(x -> _ucheck(c, x, v, src), args[2:3])
+        return _all_same(c, [_ucheck(c, args[1], v, src), _ucheck(c, args[end - (f === allocate_available ? 2 : 1)], v, src)],
+                         v, src, "the request and the supply")
     elseif f === LinearAlgebra.inv
         return _div(_ANY, _ucheck(c, args[1], v, src))
     elseif f === LinearAlgebra.I

@@ -288,18 +288,43 @@ the month within a year.
 Working along a dimension: rank technologies by cost, pick the cheapest,
 add up only the selected elements.
 
-**PySD.jl:** not translated yet: the model stops with an error naming it
-([`pysd_not_implemented`](@ref)).  Helpers for the older backends:
-[`pysd_vector_select`](@ref) and the `pysd_vector_*` functions.
+Vensim works along the last subscript of the argument and puts the results
+along the last subscript of the variable, position by position; positions
+are counted from 0, as in Vensim.
+
+**PySD.jl:** [`vector_sort_order`](@ref PySD.vector_sort_order)`(x, direction, d)`,
+[`vector_rank`](@ref PySD.vector_rank)`(x, direction, d)`,
+[`vector_reorder`](@ref PySD.vector_reorder)`(x, order, d)` along dimension `d`, and
+[`vector_select`](@ref PySD.vector_select)`(selection, x, over, missing, action, error)` over the
+dimensions `over` (Vensim's `!` subscripts), which the result no longer has.
+The translator renames the argument's last dimension to the variable's.
+Helpers for the older backends: [`pysd_vector_select`](@ref) and the
+`pysd_vector_*` functions.
+
+```julia
+order  ~ vector_sort_order(cost, 1, tech)          # cheapest first
+ranked ~ vector_reorder(cost, order, tech)
+cheapest ~ vector_select(available, cost, tech, -1, 8, 0)   # the lowest cost of the available ones
+```
 
 ### ALLOCATE BY PRIORITY, ALLOCATE AVAILABLE
 
 Sharing a limited supply among users who each ask for an amount, the
 highest priority served first.
 
-**PySD.jl:** not translated yet: the model stops with an error naming it
-([`pysd_not_implemented`](@ref)).  Helpers for the older backends:
-`pysd_allocate_by_priority`, `pysd_allocate_available`.
+**PySD.jl:** [`allocate_by_priority`](@ref PySD.allocate_by_priority)`(request, priority, width,
+supply, d)` and [`allocate_available`](@ref PySD.allocate_available)`(request, profiles, supply, d,
+p)`, along dimension `d` (the last subscript of the variable, in Vensim).
+The width and the supply may vary over the other dimensions.  ALLOCATE
+AVAILABLE's profiles have the profile dimension `p` (type, priority, width,
+extra), which Vensim's equations write as `pp[…, ptype]`.  The algorithms
+are Vensim's, as Python PySD; the helpers they call,
+`pysd_allocate_by_priority` and `pysd_allocate_available`, are also those
+of the older backends.
+
+```julia
+shipped ~ allocate_by_priority(request, priority, 1, supply, branch)
+```
 
 ## Plain calculations
 
@@ -346,4 +371,4 @@ lookups written in the model), `lookup(sheet, x, cells)` (`GET XLS LOOKUPS`,
 | `GET XLS CONSTANTS`, `GET DIRECT CONSTANTS` | `constant(sheet, cells)` |
 | `ACTIVE INITIAL(x, x0)` | `x`, with the initial value `x0` (inside an expression, a variable of its own) |
 | `GET TIME VALUE(0, offset, 0)` | `t + offset` |
-| `GAME` | not translated yet (the model stops with an error naming it) |
+| `GAME(x)` | `x` (the model is not run interactively) |

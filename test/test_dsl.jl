@@ -42,7 +42,8 @@ end
     # 1 + sin(11) and the like cancel to about 1e-5 in Vensim's arithmetic: relative
     # errors at least to 1e-3 there (absolute differences of 1e-8)
     for (model, folder, floor, tol) in [("get_xls_cellrange", "get_xls_cellrange", 1e-6, 1e-12),
-                                        ("get_lookups_subscripted_args", "get_lookups_subscripted_args", 1e-3, 1e-4)]
+                                        ("get_lookups_subscripted_args", "get_lookups_subscripted_args", 1e-3, 1e-4),
+                                        ("vector_order", "vector_order", 1e-6, 1e-12)]
         HAS_TEST_MODELS || continue
         mod = _module()
         dir = joinpath(TEST_MODELS, folder)
@@ -367,6 +368,94 @@ end
     # with Python's digits, as numpy adds them: in memory order, the last dimension fastest
     res = run_model(build(:python))
     @test res[:s][1] === res[:c] === PySD.pysd_sum(permutedims(vals))
+end
+
+@testset "DSL: Vensim's VECTOR functions" begin
+    mod = _module()
+    Core.eval(mod, :(const r = $(Dim{:r}([:A, :B])); const c = $(Dim{:c}([:w, :x, :y, :z]))))
+    Core.eval(mod, :(vals = [3.0 1.0 2.0 1.0; 0.5 4.0 4.0 -1.0]))
+    Core.eval(mod, :(picks = [1.0 0.0 2.0 0.0; 0.0 0.0 0.0 0.0]))
+    m = Core.eval(mod, :(Model(@equations begin
+        @parameters begin
+            v[r, c] = vals, [unit = u"m"]
+            sel[r, c] = picks, [unit = NoUnits]
+            n[r, c] = vals, [unit = NoUnits]
+        end
+        @variables begin
+            vt(t)[r, c], [unit = u"m"]
+            order(t)[r, c], [unit = NoUnits]
+            down(t)[r, c], [unit = NoUnits]
+            rank(t)[r, c], [unit = NoUnits]
+            sorted(t)[r, c], [unit = u"m"]
+            picked(t)[r], [unit = NoUnits]
+            mean_picked(t)[r], [unit = NoUnits]
+            all_picked(t), [unit = NoUnits]
+            order0[r, c], [unit = NoUnits]
+        end
+        vt ~ v .* (1 + 0t)                      # changes with time: computed at every step
+        order ~ vector_sort_order(vt, 1, c)
+        down ~ vector_sort_order(vt, 0, c)
+        rank ~ vector_rank(vt, 1, c)
+        sorted ~ vector_reorder(vt, order, c)
+        picked ~ vector_select(sel, n .* (1 + 0t), c, -1, 0, 0)       # sum of sel·v
+        mean_picked ~ vector_select(sel, n .* (1 + 0t), c, -1, 10, 0)  # mean of the selected v
+        all_picked ~ vector_select(sel, n .* (1 + 0t), (r, c), -1, 9, 0)
+        order0 ~ vector_sort_order(v, 1, c)    # a constant: computed once
+    end; time = 0:1:1, time_unit = u"s")))
+    res = run_model(m)
+    vals = Core.eval(mod, :vals)
+    for i in 1:2
+        row = vals[i, :]
+        @test parent(res[:order][1])[i, :] == sortperm(row) .- 1
+        @test parent(res[:order0])[i, :] == sortperm(row) .- 1
+        @test parent(res[:down][1])[i, :] == sortperm(row; rev = true) .- 1
+        @test parent(res[:rank][1])[i, :] == invperm(sortperm(row))
+        @test parent(res[:sorted][1])[i, :] == sort(row)
+    end
+    @test parent(res[:picked][1]) == [3.0 * 1 + 2.0 * 2, -1]       # B: nothing selected
+    @test parent(res[:mean_picked][1]) == [(3.0 + 2.0) / 2, -1]
+    @test res[:all_picked][1] == 3.0
+    # outside @equations, on DimArrays
+    x = DimArray(vals, (Core.eval(mod, :r), Core.eval(mod, :c)))
+    @test parent(PySD.vector_rank(x, 1, :c)) == parent(res[:rank][1])
+    @test PySD.vector_select(x .* 0 .+ 1, x, (Core.eval(mod, :r), :c), 0, 6, 0) == sum(vals)
+    # the units: positions have none, a reordered array keeps its own (vt's
+    # own equation adds a time to a number, to change with time)
+    @test all(i -> i.name === :vt, check_units(m))
+end
+
+@testset "DSL: Vensim's ALLOCATE functions" begin
+    mod = _module()
+    Core.eval(mod, :(const r = $(Dim{:r}([:A, :B])); const c = $(Dim{:c}([:w, :x, :y]));
+                     const pprofile = $(Dim{:pprofile}([:ptype, :ppriority, :pwidth, :pextra]))))
+    Core.eval(mod, :(demand = [5.0 3.0 2.0; 1.0 4.0 6.0]))
+    Core.eval(mod, :(prio = [3.0 1.0 2.0; 1.0 2.0 3.0]))
+    Core.eval(mod, :(profs = [1 3 1 0; 1 1 1 0; 1 2 1 0]))       # per c: rectangular, priority, width
+    m = Core.eval(mod, :(Model(@equations begin
+        @parameters begin
+            request[r, c] = demand, [unit = u"kg"]
+            priority[r, c] = prio, [unit = NoUnits]
+            supply[r] = [6.0, 20.0], [unit = u"kg"]
+            profiles[c, pprofile] = profs, [unit = NoUnits]
+        end
+        @variables begin
+            shipped(t)[r, c], [unit = u"kg"]
+            available(t)[r, c], [unit = u"kg"]
+        end
+        shipped ~ allocate_by_priority(request .* (1 + 0t), priority, 1, supply, c)
+        available ~ allocate_available(request .* (1 + 0t), profiles, 6, c, pprofile)
+    end; time = 0:1:1, time_unit = u"s")))
+    res = run_model(m)
+    demand, prio, profs = (Core.eval(mod, x) for x in (:demand, :prio, :profs))
+    for (i, s) in enumerate((6.0, 20.0))
+        @test parent(res[:shipped][1])[i, :] ≈ PySD.pysd_allocate_by_priority(demand[i, :], prio[i, :], 1, s)
+        @test parent(res[:available][1])[i, :] ≈ PySD.pysd_allocate_available(demand[i, :], Float64.(profs), 6)
+    end
+    @test sum(parent(res[:shipped][1])[1, :]) ≈ 6           # all the supply, the request is larger
+    @test parent(res[:shipped][1])[2, :] == demand[2, :]     # the supply is larger: all the request
+    # outside @equations, on DimArrays
+    x = DimArray(demand, (Core.eval(mod, :r), Core.eval(mod, :c)))
+    @test parent(PySD.allocate_by_priority(x, DimArray(prio, dims(x)), 1, 6.0, :c))[1, :] ≈ parent(res[:shipped][1])[1, :]
 end
 
 @testset "DSL: constants of arrays and numbers in other dimensions" begin

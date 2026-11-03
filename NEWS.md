@@ -4,6 +4,32 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## Unreleased
+
+### Added
+
+- **Vensim's VECTOR functions in models written with `@equations`**:
+  `vector_sort_order(x, direction, d)`, `vector_rank(x, direction, d)`,
+  `vector_reorder(x, order, d)` along a dimension, and
+  `vector_select(selection, x, over, missing, action, error)` over some.
+  PySD's DSL backend now translates VECTOR SELECT, SORT ORDER, RANK and
+  REORDER to them, and GAME(x) to x.
+- **Vensim's ALLOCATE functions in models written with `@equations`**:
+  `allocate_by_priority(request, priority, width, supply, d)` and
+  `allocate_available(request, profiles, supply, d, p)`, along a dimension,
+  with Vensim's algorithms (the helpers of the ODE backend).  PySD's DSL
+  backend translates ALLOCATE BY PRIORITY and ALLOCATE AVAILABLE to them.
+- **Data and lookups in parts over several dimensions**: a parameter given as
+  vectors of `data(…)` or `lookup(…)` nested one level per dimension (one part
+  per element of each), as the translator writes for Vensim's
+  `x[A, X, company]`, `x[A, Y, company]`, ….
+
+### Fixed
+
+- **VECTOR SELECT, SORT ORDER, RANK and REORDER in translated MTK models**:
+  ModelingToolkit builds the equations with symbolic values, which can't be
+  sorted; the helpers now give the same values with comparisons (`ifelse`).
+
 ## 0.6.1 (2026-11-02)
 
 Documentation only (#46): install the translator from PySD (not a fork), and
