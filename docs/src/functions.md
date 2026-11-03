@@ -292,10 +292,10 @@ Vensim works along the last subscript of the argument and puts the results
 along the last subscript of the variable, position by position; positions
 are counted from 0, as in Vensim.
 
-**PySD.jl:** [`vector_sort_order`](@ref)`(x, direction, d)`,
-[`vector_rank`](@ref)`(x, direction, d)`,
-[`vector_reorder`](@ref)`(x, order, d)` along dimension `d`, and
-[`vector_select`](@ref)`(selection, x, over, missing, action, error)` over the
+**PySD.jl:** [`vector_sort_order`](@ref PySD.vector_sort_order)`(x, direction, d)`,
+[`vector_rank`](@ref PySD.vector_rank)`(x, direction, d)`,
+[`vector_reorder`](@ref PySD.vector_reorder)`(x, order, d)` along dimension `d`, and
+[`vector_select`](@ref PySD.vector_select)`(selection, x, over, missing, action, error)` over the
 dimensions `over` (Vensim's `!` subscripts), which the result no longer has.
 The translator renames the argument's last dimension to the variable's.
 Helpers for the older backends: [`pysd_vector_select`](@ref) and the
@@ -312,8 +312,8 @@ cheapest ~ vector_select(available, cost, tech, -1, 8, 0)   # the lowest cost of
 Sharing a limited supply among users who each ask for an amount, the
 highest priority served first.
 
-**PySD.jl:** [`allocate_by_priority`](@ref)`(request, priority, width,
-supply, d)` and [`allocate_available`](@ref)`(request, profiles, supply, d,
+**PySD.jl:** [`allocate_by_priority`](@ref PySD.allocate_by_priority)`(request, priority, width,
+supply, d)` and [`allocate_available`](@ref PySD.allocate_available)`(request, profiles, supply, d,
 p)`, along dimension `d` (the last subscript of the variable, in Vensim).
 The width and the supply may vary over the other dimensions.  ALLOCATE
 AVAILABLE's profiles have the profile dimension `p` (type, priority, width,
