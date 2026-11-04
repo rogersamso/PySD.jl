@@ -70,9 +70,9 @@ struct ParentSeries
     method::Symbol
 end
 
-# a series from its times and values, as Vensim's keyword says
+# a series from its times and values, as Vensim's keyword says (as the data
+# read from Excel)
 function _series(time, ys, method::Symbol)
-    method === :interpolate && return PiecewiseLinear(time, ys)
     xs, vs = _clean_series(collect(Float64, time), collect(Float64, ys), method)
     return pysd_build_tab_itp(vs, xs, method)
 end

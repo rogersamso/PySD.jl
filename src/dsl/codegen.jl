@@ -551,7 +551,7 @@ _stack_first(parts::AbstractVector{<:LookupArray}, dims) =      # lookups writte
 _stack_first(parts, dims) = DimArray(stack(parent.(parts); dims = 1), dims)
 
 # one lookup written in the model per element: as the lookups read from files
-_values(a::AbstractArray{<:PiecewiseLinear}, dims) = LookupArray(DimArray(collect(a), dims))
+_values(a::AbstractArray{<:DataInterpolations.AbstractInterpolation}, dims) = LookupArray(DimArray(collect(a), dims))
 _values(a, dims) = DimArray(float.(a), dims)
 
 # in the order of `dims`, repeated over the dimensions of `dims` it hasn't

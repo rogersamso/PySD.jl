@@ -28,8 +28,22 @@ and the tests run before it.
   can give a number for each element of its first dimension; a vector of
   `piecewise_linear` lookups is a lookup by element.
 
+### Changed
+
+- **Lookups written in a model are DataInterpolations' `LinearInterpolation`**
+  (with constant extrapolation), as the lookups and data read from files:
+  `piecewise_linear(x => y, …)` builds one; PySD.jl's own `PiecewiseLinear` is
+  gone.
+- **Julia's functions instead of thin wrappers**: models translated with the ODE
+  and MTK backends write `π` for PI and `pysd_ln(x) / pysd_ln(base)` for LOG.
+  `pysd_pi`, `pysd_log_base` and `pysd_elmcount` are deprecated (they warn, and
+  go in 1.0), so models translated before still run.
+
 ### Fixed
 
+- **ALLOCATE AVAILABLE's normal profile with SpecialFunctions' `erfc`**, as
+  Python PySD (`math.erfc`), instead of an approximation with errors up to
+  1.5e-7.
 - **Delays with a delay time shorter than order × Δt**: the order is lowered
   until it isn't, as Python PySD and the ODE backend (when the delay time is
   known as the model is built).

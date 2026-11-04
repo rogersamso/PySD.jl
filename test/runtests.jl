@@ -67,12 +67,12 @@ end
     @test isnan(PySD._to_float("Years"))
     @test pysd_trunc(2.7) == 2.0
     @test pysd_trunc(-2.7) == -2.0
-    @test pysd_log_base(8.0, 2.0) ≈ 3.0
+    @test (@test_deprecated pysd_log_base(8.0, 2.0)) ≈ 3.0
     @test pysd_quantum(7.5, 2.0) == 6.0
     @test pysd_quantum(-7.5, 2.0) == -6.0
     @test pysd_quantum(3.0, 0.0) == 3.0          # Vensim: B <= 0 returns A
-    @test pysd_elmcount(3) === 3.0
-    @test pysd_pi() ≈ π
+    @test (@test_deprecated pysd_elmcount(3)) === 3.0
+    @test (@test_deprecated pysd_pi()) ≈ π
     @test pysd_power(2.0, 3.0) == 8.0
     @test pysd_power(-2.0, 3.0) == -8.0
     # Vensim POWER / numpy.power (also used for `^`): (-2)^2 = 4
@@ -426,7 +426,7 @@ include("test_ticks.jl")
     @test pysd_sqrt(4.0) == 2.0 && isnan(pysd_sqrt(-4.0))
     @test pysd_asin(1.0) ≈ pi / 2 && isnan(pysd_asin(2.0))
     @test pysd_acos(1.0) == 0.0 && isnan(pysd_acos(-2.0))
-    @test pysd_log_base(100.0, 10.0) ≈ 2.0 && isnan(pysd_log_base(-100.0, 10.0))
+    @test pysd_ln(100.0) / pysd_ln(10.0) ≈ 2.0 && isnan(pysd_ln(-100.0) / pysd_ln(10.0))
     # the branch IF THEN ELSE does not take may be out of the domain
     x = -27.9
     @test pysd_ifelse(x < 0.1, 0.0, 0.434294 * pysd_ln(x) + 1.0) == 0.0
@@ -437,6 +437,19 @@ end
     # each sheet's own definition, whatever the sheets' ids
     @test pysd_xlsx_read_constant(xl, "NZP", "p_growth") == 0.086
     @test pysd_xlsx_read_constant(xl, "NZP_old", "p_growth") == 0.13
+end
+
+# no type piracy in the extensions the tests load either: their methods are on
+# PySD's own functions or types (ModelingToolkit isn't a test dependency, so
+# its extension isn't checked here)
+@testset "Aqua: extensions" begin
+    own = [PySD.Model, PySD.Results, PySD.PySDTicks, PySD.run_model, PySD.save_results,
+           PySD.pysd_ticks_callback, PySD._latex_model]
+    for name in (:PySDSciMLBaseExt, :PySDLatexifyExt)
+        ext = Base.get_extension(PySD, name)
+        @test ext !== nothing
+        ext === nothing || Aqua.test_piracies(ext; treat_as_own = own)
+    end
 end
 
 end

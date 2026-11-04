@@ -361,30 +361,16 @@ function _vector_select!(w, sel, x, ::Val{ks}, missing_vals, action, err) where 
     return w
 end
 
-"A lookup given by its points: piecewise linear, constant outside them."
-struct PiecewiseLinear
-    x::Vector{Float64}
-    y::Vector{Float64}
-end
-
 """
     piecewise_linear(x₁ => y₁, x₂ => y₂, …)
 
 A lookup: called as `f(x)`, it interpolates linearly between the points and
-keeps the first or last value outside them, as Vensim.
+keeps the first or last value outside them, as Vensim.  It is DataInterpolations'
+`LinearInterpolation` with constant extrapolation, as the lookups read from
+files.
 """
 piecewise_linear(points::Pair...) =
-    PiecewiseLinear(Float64[first(p) for p in points], Float64[last(p) for p in points])
-
-function (f::PiecewiseLinear)(x::Real)
-    xs, ys = f.x, f.y
-    x <= xs[1] && return oftype(float(x), ys[1])
-    x >= xs[end] && return oftype(float(x), ys[end])
-    i = searchsortedlast(xs, x)
-    w = (x - xs[i]) / (xs[i+1] - xs[i])
-    return ys[i] + w * (ys[i+1] - ys[i])
-end
-(f::PiecewiseLinear)(x::AbstractArray) = f.(x)
+    pysd_build_tab_itp(Float64[last(p) for p in points], Float64[first(p) for p in points], :interpolate)
 
 # Broadcasting in generated code: arrays line up by dimension name.
 _bc(f, args...) = any(a -> a isa AbstractDimArray, args) ? _bc_dims(f, args...) : f.(args...)

@@ -74,7 +74,7 @@ helpers.  Models written with `@equations`, or translated with
 | `pysd_pulse_train(t, start, interval, width, end)` | `PULSE TRAIN` |
 | `pysd_ramp(t, slope, start, end)` | `RAMP` |
 | `pysd_step(t, height, step_time)` | `STEP` |
-| `pysd_log_base(x, base)` | `LOG` |
+| `pysd_ln(x) / pysd_ln(base)` | `LOG` |
 | `pysd_logical_and(a, b)`, `pysd_logical_or(a, b)`, `pysd_logical_not(a)` | `:AND:`, `:OR:`, `:NOT:` |
 | `pysd_random_0_1()`, `pysd_random_uniform(…)`, `pysd_random_normal(…)`, `pysd_random_exponential(…)` | the `RANDOM` functions (a new number at every evaluation) |
 | `pysd_vector_sort_order`, `pysd_vector_rank`, `pysd_vector_reorder` | the `VECTOR` functions |
