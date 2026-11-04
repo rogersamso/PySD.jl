@@ -524,22 +524,45 @@ end
 # --- helpers -----------------------------------------------------------------------
 
 _with_dims(x, ::Tuple{}) = x isa Integer ? float(x) : x
-function _with_dims(x, dims::Tuple)
-    sz = map(length, dims)
-    x isa AbstractDimArray && return _align(x, dims)
-    x isa Number && return DimArray(fill(float(x), sz), dims)
-    if x isa AbstractVector && !isempty(x) && first(x) isa AbstractArray
-        a = stack(parent.(x); dims = 1)                  # one array per element of the first dimension
-        size(a) == sz || error("values of size $(size(a)) for dimensions of size $sz")
-        return DimArray(float.(a), dims)
-    end
-    a = collect(x)
-    size(a) == sz || (length(a) == prod(sz) && ndims(a) == 1) ||
-        error("values of size $(size(a)) for dimensions of size $sz")
-    return DimArray(reshape(float.(a), sz), dims)
-end
+_with_dims(x, dims::Tuple) = _over(x, dims)
 
-_align(x::AbstractDimArray, dims) = DimensionalData.dims(x) == dims ? x : permutedims(x, dims)
+# a parameter's value over its dimensions, by what it is (the inputs read from
+# files have _with_dims methods of their own, src/dsl/inputs.jl)
+_over(x::AbstractDimArray, dims) = _align(x, dims)
+_over(x::Number, dims) = DimArray(fill(float(x), map(length, dims)), dims)
+function _over(x::AbstractArray, dims)
+    _by_first(x, dims) && return _stack_first([_with_dims(v, Base.tail(dims)) for v in x], dims)
+    sz = map(length, dims)
+    size(x) == sz || (x isa AbstractVector && length(x) == prod(sz)) ||
+        error("values of size $(size(x)) for dimensions of size $sz")
+    return _values(reshape(x, sz), dims)
+end
+_over(x, dims) = _over(collect(x), dims)
+
+# one value per element of the first dimension (a number for all the others,
+# an array, or nested vectors again), not the values one after the other
+_by_first(x::AbstractVector, dims) =
+    length(dims) > 1 && length(x) == length(first(dims)) &&
+    !(eltype(x) <: Number && length(x) == prod(map(length, dims)))
+_by_first(x, dims) = false
+
+_stack_first(parts::AbstractVector{<:LookupArray}, dims) =      # lookups written in the model
+    LookupArray(DimArray(stack([parent(p.series) for p in parts]; dims = 1), dims))
+_stack_first(parts, dims) = DimArray(stack(parent.(parts); dims = 1), dims)
+
+# one lookup written in the model per element: as the lookups read from files
+_values(a::AbstractArray{<:PiecewiseLinear}, dims) = LookupArray(DimArray(collect(a), dims))
+_values(a, dims) = DimArray(float.(a), dims)
+
+# in the order of `dims`, repeated over the dimensions of `dims` it hasn't
+# (a value over [dim1] for a variable over [dim1, dim2], as Vensim does)
+function _align(x::AbstractDimArray, dims)
+    DimensionalData.dims(x) == dims && return x
+    if length(DimensionalData.dims(x)) < length(dims)
+        x = DimensionalData.broadcast_dims((a, _) -> a, x, _blank(dims))
+    end
+    return DimensionalData.dims(x) == dims ? x : permutedims(x, dims)
+end
 
 _blank(dims) = DimArray(zeros(map(length, dims)), dims)
 

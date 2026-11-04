@@ -76,6 +76,7 @@ with no stock in between.
 | `smooth(x, τ; order = 3)` (`; order = n, init = x0`) | `SMOOTH3`, `SMOOTH N` |
 | `delay(x, τ)`, `delay(x, τ; init = x0)` | `DELAY1`, `DELAY1I` |
 | `delay(x, τ; order = 3)` (`; order = n, init = x0`) | `DELAY3`, `DELAY N` |
+| `delay(x, τ; order = n, lagged_times = true)` | `DELAY N` as Python PySD, with a τ that changes |
 | `trend(x, τ; init = r0)` | `TREND` |
 | `x(t - τ; init = x0)` | `DELAY FIXED` |
 | `sample_if_true(c, x; init = x0)` | `SAMPLE IF TRUE` |
@@ -83,7 +84,11 @@ with no stock in between.
 | `x(t₀)` | `INITIAL` |
 
 The smooths, delays and trends have hidden stocks of their own, which the
-model integrates with the rest.  The fixed delay and the sample move by
+model integrates with the rest.  A delay's order is lowered while order × Δt
+is longer than its delay time, as Python PySD (when the delay time is known as
+the model is built).  With `lagged_times = true`, stage k uses the delay time of
+k − 1 steps of Δt before, and the output the one of the step before: Python
+PySD's DELAY N when τ changes.  The fixed delay and the sample move by
 whole steps of Δt, as Vensim ([Solvers and the model's ticks](@ref)).  New
 operators are new subtypes of [`StatefulOperator`](@ref).
 

@@ -65,6 +65,38 @@ output(op::MaterialDelay, s, x, τ) = s[end] * op.order / τ
 output_args(::MaterialDelay) = (2,)
 init_args(::MaterialDelay) = (2,)
 
+"""
+DELAY N as Python PySD runs it (`delay(x, τ; order = n, lagged_times = true)`):
+when the delay time changes, stage k uses the delay time of k - 1 steps of Δt
+before, and the output the one of the step before.  The past delay times are
+hidden stocks too (each the one before it after a step of Δt: exact with Euler
+steps of Δt).
+"""
+struct LaggedDelay <: StatefulOperator
+    order::Int
+    dt::Float64
+end
+_nlags(op::LaggedDelay) = max(op.order - 1, 1)
+nstates(op::LaggedDelay) = op.order + _nlags(op)
+initial_states(op::LaggedDelay, x, τ; init = x) =
+    [fill(float(init) * τ / op.order, op.order); fill(float(τ), _nlags(op))]
+# the delay time of stage i, τ(t - (i - 1)Δt): the current one, then the past ones
+_stage_time(op::LaggedDelay, s, τ, i) = i == 1 ? τ : s[op.order + i - 1]
+function rates!(d, op::LaggedDelay, s, x, τ)
+    n = op.order
+    d[1] = x - n * s[1] / τ
+    for i in 2:n
+        d[i] = n * (s[i-1] / _stage_time(op, s, τ, i - 1) - s[i] / _stage_time(op, s, τ, i))
+    end
+    d[n + 1] = (τ - s[n + 1]) / op.dt
+    for j in 2:_nlags(op)
+        d[n + j] = (s[n + j - 1] - s[n + j]) / op.dt
+    end
+end
+output(op::LaggedDelay, s, x, τ) = s[op.order] * op.order / s[op.order + 1]
+output_args(::LaggedDelay) = ()
+init_args(::LaggedDelay) = (2,)
+
 "TREND, as Python PySD: a smoothed level and the fractional growth rate."
 struct Trend <: StatefulOperator end
 nstates(::Trend) = 1

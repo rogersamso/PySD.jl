@@ -119,22 +119,21 @@ eu = run_model(europe; inputs = (; parents = (w,)))
 ## What isn't translated yet
 
 **Functions it does not know** (as `LOOKUP FORWARD`): the translation
-finishes with a warning, and writes `pysd_not_implemented("NAME", …)`: the
-model stops with an error naming the function when it evaluates it, as
-Python PySD's translations do.
+finishes with a warning, and writes `error("Not implemented function 'NAME' …")`:
+the model stops with an error naming the function, as Python PySD's
+translations do.
 
 **Constructs.**  For these the translation stops with an error naming the
 equation:
 
 - `GET TIME VALUE` other than `GET TIME VALUE(0, offset, 0)` (the time plus an
   offset, which is translated);
-- macros (`:MACRO:` … `:END OF MACRO:`);
-- `INITIAL` of an expression (`INITIAL` of a variable is translated);
-- time settings that are expressions (a `FINAL TIME` that depends on a
-  variable);
-- some subscript forms: a subscript used as a value in a conditional
-  subscript, `:EXCEPT:` narrower at several positions, `ELMCOUNT` of a copy of
-  a range, a subscript range read from Excel.
+- time settings that change during the run (a `FINAL TIME` that depends on a
+  variable or on `Time`); time settings that are expressions of numbers are
+  translated;
+- `DELAY FIXED` of an expression (of a variable it is translated);
+- macros with several outputs (`:MACRO: NAME(input : output)`); macros of one
+  output are written in place, a copy of their equations per call.
 
 [Vensim functions](@ref) lists every function with its form in PySD.jl.
 PySD's reference tests list the test models still known to fail, with the

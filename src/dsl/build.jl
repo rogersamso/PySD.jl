@@ -352,12 +352,31 @@ function _given_dims(call, L)
     return d isa Tuple ? d : (d,)
 end
 
+# a value if it is known as the model is built, else nothing (it changes with time)
+_if_known(x, k::Known) = try _static_value(x, k) catch; nothing end
+
+_shortest(τ::Real) = τ
+_shortest(τ::AbstractArray{<:Real}) = isempty(τ) ? nothing : minimum(τ)
+_shortest(_) = nothing
+
+# as Python PySD: a delay's order lowered while order * Δt exceeds its delay time
+function _lowered_order(order::Int, τ::Real, dt)
+    while order > 1 && order * dt > τ
+        order -= 1
+    end
+    return order
+end
+_lowered_order(order::Int, ::Nothing, dt) = order
+
 function _make_operator(c::OperatorCall, byname, @nospecialize(p0), @nospecialize(env), @nospecialize(inputs), t0, dt)
     known = Known(byname, p0, env, inputs, t0, dt, c.source)
     sv(x) = _static_value(x, known)
     k = c.kind
     k === :smooth && return Smooth(Int(sv(get(c.kwargs, :order, 1))))
-    k === :delay && return MaterialDelay(Int(sv(get(c.kwargs, :order, 1))))
+    if k === :delay
+        order = _lowered_order(Int(sv(get(c.kwargs, :order, 1))), _shortest(_if_known(c.args[2], known)), dt)
+        return sv(get(c.kwargs, :lagged_times, false)) ? LaggedDelay(order, dt) : MaterialDelay(order)
+    end
     k === :trend && return Trend()
     k === :sample_if_true && return SampleIfTrue()
     k === :initial && return Initial()
