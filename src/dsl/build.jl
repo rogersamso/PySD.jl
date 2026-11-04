@@ -31,11 +31,20 @@ end
 
 """
     Model(sets…; time, time_unit, saveat = step(time), inputs = (;))
+    Model(sets…; time = (t₀, t_final), dt, time_unit, saveat = dt, inputs = (;))
 
 Build a model from equation sets (views, components, connections): join them,
 check the declarations, units, dimensions and equations, sort the equations
 and generate the code that runs it.  `time = t₀:Δt:t_final`; `inputs` are the
-input sheets, by name.  `numerics = :python` keeps Python PySD's last digits
+input sheets, by name.
+
+The time settings can also change during the run, as Vensim's: `t_final`,
+`dt` and `saveat` can each name a variable of the model (`time = (0,
+:horizon), dt = :step, saveat = :every`), read at every step, and `t₀` a
+variable whose value at t = 0 is the start.  When Δt changes, the equations
+read the step through its variable, not `Δt`, and the model can't have
+nonnegative stocks or operators that count whole steps (fixed delays, samples,
+random draws, delays with `lagged_times`).  `numerics = :python` keeps Python PySD's last digits
 (for translated models: the C maths library, numpy's order of additions,
 LAPACK's gesv); the default, `:julia`, uses Julia's own functions.
 """
@@ -48,6 +57,7 @@ struct Model
     dt::Float64
     tf::Float64
     saveat::Float64
+    changing::NamedTuple                  # the time settings that are variables: (; stop, dt, saveat) => name
     time_unit::Any
     inputs::NamedTuple
     env::NamedTuple
@@ -75,9 +85,10 @@ function Model(sets...; kwargs...)
     return Base.invokelatest(_within, () -> _model(sets; kwargs...), M)
 end
 
-function _model(sets; time, time_unit, saveat = step(time), inputs::NamedTuple = (;),
+function _model(sets; time, time_unit, dt = nothing, saveat = nothing, inputs::NamedTuple = (;),
                 numerics::Symbol = :julia)
     numerics in (:julia, :python) || throw(ArgumentError("numerics is :julia or :python, not $(repr(numerics))"))
+    t0s, tfs, dts = _time_span(time, dt)
     r = Resolver(sets, inputs)
     vars, byname = Var[], Dict{Symbol,Var}()
     for (full, (d, i)) in sort!(collect(r.decls); by = first)
@@ -106,11 +117,18 @@ function _model(sets; time, time_unit, saveat = step(time), inputs::NamedTuple =
         end
     end
     env = NamedTuple{Tuple(keys(r.env))}(Tuple(values(r.env)))
-    t0, dt = Float64(first(time)), Float64(step(time))
     # parameters and constants run once per run: a plain function (comprehensions
     # in declarations need it; RuntimeGeneratedFunctions mishandles them), barely compiled
     params = _in_once(_params_code(order, env, numerics))
-    p0 = Base.invokelatest(params, inputs, (;), env, t0, dt)
+    p_at(t0, dt) = Base.invokelatest(params, inputs, (;), env, t0, dt)
+    saves = something(saveat, dts)
+    changing = _changing(byname; stop = tfs, dt = dts, saveat = saves)
+    # the start: t₀, and Δt there (what operators and parameters use)
+    t0 = _start(t0s, byname, p_at(0.0, NaN), env, inputs, 0.0)
+    dt = _start(dts, byname, p_at(t0, NaN), env, inputs, t0)
+    p0 = p_at(t0, dt)
+    tf = _start_if_known(tfs, byname, p0, env, inputs, t0, dt)
+    saveat = _start_if_known(saves, byname, p0, env, inputs, t0, dt)
     # the stocks, then the operators' hidden stocks, in the state vector
     statevec = Dict{Symbol,UnitRange{Int}}()
     k = 0
@@ -138,6 +156,7 @@ function _model(sets; time, time_unit, saveat = step(time), inputs::NamedTuple =
         push!(ops, Operator(call, op, dims, (k + 1):(k + n), slot))
         k += n
     end
+    haskey(changing, :dt) && _check_changing_dt(changing.dt, vars, ops)
     for (i, o) in enumerate(ops)
         isempty(o.dims) || push!(L.buffers, Symbol("o", i) => o.dims)     # the operator's value
     end
@@ -148,10 +167,66 @@ function _model(sets; time, time_unit, saveat = step(time), inputs::NamedTuple =
     rhs! = _compile(_rhs_code(vars, ops, statevec, L, :rhs))
     observe = _compile(_rhs_code(vars, ops, statevec, L, :observe))
     buffers = Pair{Symbol,Tuple}[name => _size(dims) for (name, dims) in L.buffers]
-    return Model(vars, byname, ops, k, t0, dt, Float64(last(time)), Float64(saveat), time_unit,
+    return Model(vars, byname, ops, k, t0, dt, tf, saveat, changing, time_unit,
                  inputs, env, buffers, params, init, rhs!, observe, Ref{Any}(nothing), structural,
                  collect(EquationSet, sets))
 end
+
+# --- time settings ------------------------------------------------------------
+
+# (t₀, t_final, Δt) as given: numbers, or names of the model's variables
+_time_span(time::AbstractRange, ::Nothing) = (first(time), last(time), step(time))
+_time_span(time::AbstractRange, dt) =
+    throw(ArgumentError("give Δt once: time = t₀:Δt:t_final, or time = (t₀, t_final) and dt = Δt"))
+_time_span(time::Tuple{Any,Any}, dt) = (time..., dt)
+_time_span(time::Tuple{Any,Any}, ::Nothing) = throw(ArgumentError("time = (t₀, t_final) needs dt = Δt"))
+_time_span(time, dt) = throw(ArgumentError("time is t₀:Δt:t_final or (t₀, t_final), not $(repr(time))"))
+
+# the settings that change during the run, by the names of their variables
+function _changing(byname; settings...)
+    named = filter(s -> !(last(s) isa Real), collect(settings))
+    for (k, x) in named
+        _setting_var(x, byname, k)
+    end
+    return (; named...)
+end
+
+function _setting_var(x::Symbol, byname, what)
+    v = get(byname, x, nothing)
+    v === nothing && throw(ArgumentError("$what = :$x: the model has no variable `$x`"))
+    (isempty(v.dims) && v.kind !== :stock) ||
+        error("$(_where(v.decl.source)): `$x` gives $what: a parameter or an auxiliary without dimensions")
+    return v
+end
+_setting_var(x, byname, what) = throw(ArgumentError("$what is a number or the name of a variable, not $(repr(x))"))
+
+# a setting's value at the start (a variable: when the model is built, at t)
+_start(x::Real, byname, p0, env, inputs, t) = Float64(x)
+function _start(x::Symbol, byname, p0, env, inputs, t)
+    v = _setting_var(x, byname, "a time setting")
+    return Float64(_static_value(VarRef(x), Known(byname, p0, env, inputs, t, NaN, v.decl.source)))
+end
+_start_if_known(x::Real, byname, p0, env, inputs, t0, dt) = Float64(x)
+_start_if_known(x::Symbol, byname, p0, env, inputs, t0, dt) =
+    something(_if_known(VarRef(x), Known(byname, p0, env, inputs, t0, dt, byname[x].decl.source)), NaN)
+
+# Δt as a variable: the equations and the operators must not take it as fixed
+function _check_changing_dt(name, vars, ops)
+    for v in vars, part in [v.rate; v.parts; something(v.init, Part[])]
+        _uses_dt(part.rhs) &&
+            error("$(_where(part.source)): Δt changes during the run (dt = :$name): use `$name` instead of Δt")
+    end
+    for v in vars
+        get(v.decl.metadata, :nonnegative, false) &&
+            error("$(_where(v.decl.source)): `$(v.name)` is nonnegative, which needs a fixed Δt (dt = :$name changes)")
+    end
+    for o in ops
+        _by_steps(o.op) &&
+            error("$(_where(o.call.source)): this operator counts whole steps, which needs a fixed Δt (dt = :$name changes)")
+    end
+end
+_uses_dt(x::Expr) = x == :(p.dt) || any(_uses_dt, x.args)
+_uses_dt(x) = false
 
 # --- equations --------------------------------------------------------------
 

@@ -181,7 +181,8 @@ end
 
 function _histories(m, ::Type{T}) where {T}
     clock = Clock(m.t0, m.dt)
-    nsteps = round(Int, (m.tf - m.t0) / m.dt) + 1
+    # (room for every step, when t_final is known)
+    nsteps = isfinite(m.tf) ? round(Int, (m.tf - m.t0) / m.dt) + 1 : 0
     delays, samples, randoms = DelayHistory{T}[], SampleHistory{T}[], RandomHistory[]
     for o in m.operators
         E = prod(_size(o.dims); init = 1)
