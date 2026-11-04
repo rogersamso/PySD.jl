@@ -27,6 +27,15 @@ _close(a::AbstractArray, b::AbstractArray) = size(a) == size(b) && all(_close(x,
     res = Results(m, sol)
     @test res[:teacup_temperature][end] ≈ run_model(m; params = (; characteristic_time = 5))[:teacup_temperature][end]
     @test res[:characteristic_time] == 5
+    # time settings that change during the run: only run_model steps through them
+    changing = _build("""@variables begin
+                             x(t), [unit = u"s"]
+                             stop(t), [unit = u"s"]
+                         end
+                         ∂t(x) ~ 1
+                         x(t₀) ~ 0
+                         stop ~ ifelse(x >= 3, t, 100)"""; time = "time = (0, :stop), dt = 1")
+    @test_throws "change during the run" ODEProblem(changing)
     @test_logs run_model(_dsl("sample_if_true"), Euler())
 end
 

@@ -24,6 +24,8 @@ value, test the time for equality, or keep a stock non-negative) are named in a
 warning: those are the ones that may mean something else.
 """
 function SciMLBase.ODEProblem(m::Model; params::NamedTuple = (;), inputs::NamedTuple = (;), kwargs...)
+    isempty(m.changing) ||
+        error("the time settings $(join(keys(m.changing), ", ")) change during the run: run_model(model) steps through them")
     p = PySD._runparams(m; params, inputs)
     u0 = Base.invokelatest(m.init.f, p)
     cb = _ticks_callback(m)

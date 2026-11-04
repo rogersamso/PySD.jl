@@ -4,6 +4,22 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## 0.9.0 (2026-11-04)
+
+### Added
+
+- **Time settings that change during the run**: `Model(sets…; time = (t₀,
+  :final_time), dt = :time_step, saveat = :saveper)` names a variable of the
+  model for t_final, Δt or saveat, read at every step as Vensim's and Python
+  PySD's `FINAL TIME`, `TIME STEP` and `SAVEPER`; t₀ can be a name too, its
+  value at t = 0.  With it PySD's DSL backend translates all of PySD's test
+  models that the Python pathway runs (186 match Vensim's output).
+
+### Compatibility
+
+- `time = t₀:Δt:t_final` and the models built with it run as before.
+  `Model` now also takes `dt` (with `time = (t₀, t_final)`).
+
 ## 0.8.0 (2026-11-04)
 
 ### Added

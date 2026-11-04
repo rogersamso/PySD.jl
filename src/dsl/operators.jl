@@ -111,6 +111,11 @@ output_args(::Trend) = (1, 2)
 abstract type HistoryOperator <: StatefulOperator end
 nstates(::HistoryOperator) = 0
 
+# operators that move by whole steps of Δt (a Δt that changes breaks them)
+_by_steps(::StatefulOperator) = false
+_by_steps(::HistoryOperator) = true
+_by_steps(::LaggedDelay) = true
+
 """
 A fixed delay `x(t - τ; init)` (DELAY FIXED): the input round(τ / Δt) steps
 before, copied exactly.

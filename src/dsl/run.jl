@@ -55,8 +55,10 @@ _numtype(x::AbstractArray{<:Number}) = typeof(float(zero(eltype(x))))
 _numtype(x::Union{Tuple,NamedTuple}) = mapreduce(_numtype, promote_type, x; init = Float64)
 _numtype(x) = Float64
 
+_simulate(init, rhs!, observe, p, m::Model) = _simulate(init, rhs!, observe, p, m, m.changing)
+
 # Euler steps, as Vensim; fixed delays and samples move by whole steps
-function _simulate(init, rhs!, observe, p, m::Model)
+function _simulate(init, rhs!, observe, p, m::Model, ::NamedTuple{()})
     u = init(p)
     du = similar(u)
     nsteps = round(Int, (m.tf - m.t0) / m.dt)
@@ -76,11 +78,54 @@ function _simulate(init, rhs!, observe, p, m::Model)
     return times, saved
 end
 
+# Time settings that change during the run, as Python PySD: at every step, Δt,
+# t_final and saveat as their variables are then; a step while t + Δt·10⁻⁵ <
+# t_final, a save where t - t₀ is a multiple of saveat (to Δt·10⁻⁵)
+function _simulate(init, rhs!, observe, p, m::Model, changing::NamedTuple)
+    at = Dict(v.name => i for (i, v) in enumerate(_shown(m.vars)))
+    stop, dt, every = (_reader(get(changing, k, getfield(m, f)), m, at)
+                       for (k, f) in ((:stop, :tf), (:dt, :dt), (:saveat, :saveat)))
+    u = init(p)
+    du = similar(u)
+    t = m.t0
+    times, saved = Float64[], Vector{Any}[]
+    while true
+        now = observe(u, p, t)
+        h = _now(dt, now, p)
+        prec = h * 1e-5
+        _saves(t - m.t0, _now(every, now, p), prec) && (push!(times, t); push!(saved, now))
+        t + prec < _now(stop, now, p) || break
+        rhs!(du, u, p, t)
+        @. u += h * du
+        _advance_all!(p)
+        t += h
+    end
+    return times, saved
+end
+
+# a time setting during the run: a number, a parameter's value, an auxiliary's now
+struct ParameterValue
+    id::Symbol
+end
+struct ObservedValue
+    index::Int
+end
+_reader(x::Real, m, at) = Float64(x)
+function _reader(x::Symbol, m, at)
+    v = m.byname[x]
+    return v.kind in (:parameter, :constant) ? ParameterValue(v.id) : ObservedValue(at[v.name])
+end
+_now(x::Float64, now, p) = x
+_now(x::ParameterValue, now, p) = Float64(getfield(p.par, x.id))
+_now(x::ObservedValue, now, p) = Float64(now[x.index])
+
+_saves(elapsed, every, prec) = mod(elapsed, every) < prec || mod(-elapsed, every) < prec
+
 """
     run_model(model; params = (;), inputs = (;), check_units = false)
 
 Run `model` from t₀ to t_final with Euler steps of Δt, as Vensim, and save
-every `saveat`.  `params` changes parameters by name (`(; τ = 5)`), `inputs`
+every `saveat` (each read at every step where it is a variable).  `params` changes parameters by name (`(; τ = 5)`), `inputs`
 input sheets (`(; scen_w = excel(…))`).  `check_units = true` checks the
 units first ([`check_units`](@ref)) and stops if they don't add up;
 `:warn` prints the issues and runs anyway.

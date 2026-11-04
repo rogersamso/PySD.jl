@@ -80,12 +80,12 @@ end
 end
 
 # the model in `body`, built, or the message of the error it gives
-function _build(body)
+function _build(body; time = "time = 0:1:10")
     mod = Module()
     Core.eval(mod, :(using PySD))
     Core.eval(mod, :(const d = $(Dim{:d}([:a, :b, :c]))))
     try
-        Core.eval(mod, Meta.parse("Model(@equations begin\n$body\nend; time = 0:1:10, time_unit = u\"s\")"))
+        Core.eval(mod, Meta.parse("Model(@equations begin\n$body\nend; $time, time_unit = u\"s\")"))
     catch e
         e isa LoadError && (e = e.error)
         return sprint(showerror, e)
@@ -540,6 +540,48 @@ end
     r = run_model(m)
     @test parent(r[:c]) == [1 2 3; 0 0 0]
     @test parent(r[:z]) == [1 2 3; -1 -2 -3]
+end
+
+@testset "DSL: time settings that change during the run" begin
+    # Vensim's test model control_vars: Δt, t_final and saveat as variables
+    vars = """@variables begin
+                  final_time(t), [unit = u"s"]
+                  time_step(t), [unit = u"s"]
+                  saveper(t), [unit = u"s"]
+                  x(t), [unit = u"s"]
+              end
+              final_time ~ ifelse(t < 5, 10, 50)
+              time_step ~ ifelse(t < 4, 1, 0.5)
+              saveper ~ ifelse(t < 10, time_step, 5)"""
+    m = _build(vars * "\n∂t(x) ~ 1\nx(t₀) ~ 0";
+               time = "time = (0, :final_time), dt = :time_step, saveat = :saveper")
+    r = run_model(m)
+    @test r.time == [0:4; 4.5:0.5:10; 15:5:50]
+    @test r[:x] == r.time
+    @test (m.t0, m.dt, m.tf, m.saveat) == (0, 1, 10, 1)        # as they start
+    # t_final from the state; t₀ a parameter; saveat by default Δt
+    m = _build("""@parameters begin
+                      start = 2, [unit = u"s"]
+                  end
+                  @variables begin
+                      x(t), [unit = u"s"]
+                      stop(t), [unit = u"s"]
+                  end
+                  ∂t(x) ~ 1
+                  x(t₀) ~ 0
+                  stop ~ ifelse(x >= 3, t, 100)"""; time = "time = (:start, :stop), dt = 0.5")
+    r = run_model(m)
+    @test r.time == 2:0.5:5
+    @test isnan(m.tf)
+    # a number for a setting is the same as a range
+    @test run_model(_build(vars * "\n∂t(x) ~ 1\nx(t₀) ~ 0"; time = "time = (0, 3), dt = 1")).time == 0:3
+    # Δt that changes: the equations read it by its variable, no step counting
+    err(body) = _build(vars * "\n" * body; time = "time = (0, 10), dt = :time_step")
+    @test occursin("use `time_step` instead of Δt", err("∂t(x) ~ Δt\nx(t₀) ~ 0"))
+    @test occursin("counts whole steps", err("∂t(x) ~ 1\nx(t₀) ~ 0\n@variables y(t), [unit = u\"s\"]\ny ~ x(t - 2; init = 0)"))
+    @test occursin("has no variable `nope`", _build(vars * "\n∂t(x) ~ 1\nx(t₀) ~ 0"; time = "time = (0, :nope), dt = 1"))
+    @test occursin("needs dt", _build(vars * "\n∂t(x) ~ 1\nx(t₀) ~ 0"; time = "time = (0, 10)"))
+    @test occursin("give Δt once", _build(vars * "\n∂t(x) ~ 1\nx(t₀) ~ 0"; time = "time = 0:1:10, dt = 1"))
 end
 
 @testset "DSL: a fixed delay of a parameter" begin

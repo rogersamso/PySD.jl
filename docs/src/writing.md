@@ -214,3 +214,24 @@ checks the declarations and the dimensions, and sorts and compiles the
 equations.  `saveat` is Vensim's `SAVEPER`.  [`check_units`](@ref) lists
 the equations whose units don't add up, and `run_model(m; check_units =
 true)` checks them before running (`:warn` to only print them).
+
+### Time settings that change during the run
+
+Vensim's `FINAL TIME`, `TIME STEP` and `SAVEPER` can be equations, read at
+every step.  Give `time = (t₀, t_final)` and `dt`, and name a variable of the
+model for each setting that changes:
+
+```julia
+Model(sets…; time = (0, :final_time), dt = :time_step, saveat = :saveper, time_unit = u"yr")
+```
+
+`run_model` then steps as Python PySD does: at every step it reads Δt,
+t_final and saveat, steps while t + Δt·10⁻⁵ < t_final, and saves where t − t₀
+is a multiple of saveat.  t₀ can be a name too: its value at t = 0, once, as
+Vensim.  A setting can be any variable without dimensions, a stock's
+included (stop when the stock reaches a value).
+
+When Δt changes, the equations read the step through its variable, not `Δt`,
+and the model can't have nonnegative stocks or operators that count whole
+steps (fixed delays, `sample_if_true`, random draws, `lagged_times` delays):
+`Model` says which.  SciML's solvers (`run_model(m, alg)`) need numbers.
