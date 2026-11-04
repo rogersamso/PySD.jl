@@ -219,7 +219,8 @@ harvest, periodic maintenance).
 \text{PULSE TRAIN} = \begin{cases} 1 & \text{start} \le t < \text{end} \text{ and } (t - \text{start}) \bmod \text{interval} < \text{width} \\ 0 & \text{otherwise} \end{cases}
 ```
 
-**PySD.jl:** `pysd_pulse_train(t, start, interval, width, end)`.
+**PySD.jl:** `(start ≤ t < stop) & (mod(t - start + 1e-6, interval) < width)`
+(as Python PySD, with Vensim's tolerance of 1e-6).
 
 ### STEP
 
@@ -278,10 +279,12 @@ the month within a year.
 ```math
 \text{INTEGER}(x) = \operatorname{trunc}(x), \qquad
 \text{QUANTUM}(x, q) = q\,\operatorname{trunc}(x / q), \qquad
-\text{MODULO}(x, m) = x - m\left\lfloor \frac{x}{m} \right\rfloor
+\text{MODULO}(x, m) = x - m\,\operatorname{trunc}(x / m)
 ```
 
-**PySD.jl:** `trunc(x)`, `pysd_quantum(x, q)`, `mod(x, m)`.
+**PySD.jl:** `trunc(x)`, `q * trunc(x / q)` (`x` when `q` is below 1e-6, as
+Python PySD), `rem(x, m)` (the sign of `x`, as Vensim; Julia's `mod` takes
+the sign of `m`).
 
 ### VECTOR SELECT, VECTOR RANK, VECTOR SORT ORDER, VECTOR REORDER
 

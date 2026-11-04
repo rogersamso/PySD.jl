@@ -4,6 +4,50 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## 0.8.0 (2026-11-04)
+
+### Added
+
+- **What PySD's DSL backend translates with it**: macros (written in place),
+  `:EXCEPT:` narrower at several positions, `INITIAL` of an expression,
+  subscripts and elements as values, ranges defined with other ranges,
+  `GET DIRECT SUBSCRIPT`, data in parts of any shape; 184 of the test models
+  match Vensim's output (all but the two whose time settings change during
+  the run).  Translated models use Julia's functions where there is one
+  (`rem` for MODULO, `trunc` for QUANTUM, `mod` for PULSE TRAIN, `error` for
+  a function not translated).
+- **DELAY N as Python PySD runs it**: `delay(x, τ; order = n, lagged_times =
+  true)` keeps the past delay times, so that when τ changes stage k uses the
+  delay time of k - 1 steps before (PySD's DSL backend writes it for DELAY N
+  with a delay time that changes).
+- **`data(parents, name; method)`**: Vensim's keywords (`:hold_backward`,
+  `:look_forward`, `:raw`) for data from other models' runs or files, as for
+  Excel data.
+- **Values that fill the other dimensions**: a variable over `[a, b]` defined
+  as a value over `[a]` repeats it over `b`, as Vensim; a parameter in parts
+  can give a number for each element of its first dimension; a vector of
+  `piecewise_linear` lookups is a lookup by element.
+
+### Changed
+
+- **Lookups written in a model are DataInterpolations' `LinearInterpolation`**
+  (with constant extrapolation), as the lookups and data read from files:
+  `piecewise_linear(x => y, …)` builds one; PySD.jl's own `PiecewiseLinear` is
+  gone.
+- **Julia's functions instead of thin wrappers**: models translated with the ODE
+  and MTK backends write `π` for PI and `pysd_ln(x) / pysd_ln(base)` for LOG.
+  `pysd_pi`, `pysd_log_base` and `pysd_elmcount` are deprecated (they warn, and
+  go in 1.0), so models translated before still run.
+
+### Fixed
+
+- **ALLOCATE AVAILABLE's normal profile with SpecialFunctions' `erfc`**, as
+  Python PySD (`math.erfc`), instead of an approximation with errors up to
+  1.5e-7.
+- **Delays with a delay time shorter than order × Δt**: the order is lowered
+  until it isn't, as Python PySD and the ODE backend (when the delay time is
+  known as the model is built).
+
 ## 0.7.0 (2026-11-04)
 
 ### Added

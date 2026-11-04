@@ -458,6 +458,70 @@ end
     @test parent(PySD.allocate_by_priority(x, DimArray(prio, dims(x)), 1, 6.0, :c))[1, :] ≈ parent(res[:shipped][1])[1, :]
 end
 
+@testset "DSL: values over fewer dimensions, values by element, lookups by element" begin
+    mod = _module()
+    Core.eval(mod, :(const a = $(Dim{:a}([:x, :y])); const b = $(Dim{:b}([:p, :q, :r]))))
+    m = Core.eval(mod, :(Model(@equations begin
+        @parameters begin
+            one[a] = [1, 2], [unit = NoUnits]
+            byrow[a, b] = [10, 20], [unit = NoUnits]         # a number for each element of a
+            f[a] = [piecewise_linear(0 => 0, 2 => 2), piecewise_linear(0 => 0, 2 => 4)], [unit = NoUnits]
+        end
+        @variables begin
+            two[a, b], [unit = NoUnits]
+            g(t)[a], [unit = NoUnits]
+        end
+        two ~ one                                              # repeated over b, as Vensim
+        g ~ f(t)
+    end; time = 0:1:2, time_unit = u"s")))
+    res = run_model(m)
+    @test parent(res[:two]) == [1.0 1.0 1.0; 2.0 2.0 2.0]
+    @test parent(res[:byrow]) == [10.0 10.0 10.0; 20.0 20.0 20.0]
+    @test parent(res[:g][2]) ≈ [1.0, 2.0]
+end
+
+@testset "DSL: delays as Python PySD (order lowered, DELAY N's past delay times)" begin
+    mod = _module()
+    m = Core.eval(mod, :(Model(@equations begin
+        @variables begin
+            x(t), [unit = NoUnits]
+            τ(t), [unit = NoUnits]
+            short3(t), [unit = NoUnits]
+            short2(t), [unit = NoUnits]
+            n_lagged(t), [unit = NoUnits]
+            n_constant(t), [unit = NoUnits]
+            plain(t), [unit = NoUnits]
+        end
+        x ~ ifelse(t ≥ 3, 5.0, 1.0)
+        τ ~ ifelse(t ≥ 6, 8.0, 4.0)
+        # 3 Δt > 2.5 Δt: the order lowered to 2, as Python PySD
+        short3 ~ delay(x, 2.5; order = 3)
+        short2 ~ delay(x, 2.5; order = 2)
+        n_lagged ~ delay(x, τ; order = 3, lagged_times = true)
+        n_constant ~ delay(x, 4; order = 3, lagged_times = true)
+        plain ~ delay(x, 4; order = 3)
+    end; time = 0:1:20, time_unit = u"s")))
+    res = run_model(m)
+    @test res[:short3] ≈ res[:short2]
+    @test res[:n_constant] ≈ res[:plain]               # a delay time that doesn't change
+    # Python PySD's DelayN, Euler steps of 1: stage k uses τ of k - 1 steps before
+    xs(t) = t ≥ 3 ? 5.0 : 1.0
+    τs(t) = t ≥ 6 ? 8.0 : 4.0
+    n = 3
+    state = fill(xs(0) * τs(0), n)
+    times = fill(τs(0), n)
+    out = Float64[]
+    for t in 0:20
+        push!(out, state[end] / times[1])
+        times = [τs(t); times[1:end-1]]
+        outflows = state ./ times
+        inflows = [xs(t); outflows[1:end-1]]
+        state = state .+ (inflows .- outflows) .* n
+    end
+    @test res[:n_lagged] ≈ out
+    @test !(res[:n_lagged] ≈ res[:plain])
+end
+
 @testset "DSL: constants of arrays and numbers in other dimensions" begin
     mod = _module()
     Core.eval(mod, :(const a = $(Dim{:a}([:x, :y])); const b = $(Dim{:b}([:p, :q, :r]))))
@@ -571,6 +635,27 @@ end
         end
     end
     @test run_model(r2; inputs = (; parents = (series_file(wtab),)))[:s] == [10.0, 11.0, 12.0]
+    # Vensim's keywords: the value held from the time before, or taken from the next
+    r3 = Core.eval(mod, :(Model(@equations begin
+        @parameters begin
+            held = data(parents, :v; method = :hold_backward), [unit = NoUnits]
+            next = data(parents, :v; method = :look_forward), [unit = NoUnits]
+        end
+        @variables begin
+            h(t), [unit = NoUnits]
+            n(t), [unit = NoUnits]
+        end
+        h ~ held(t)
+        n ~ next(t)
+    end; time = 0:0.5:2, time_unit = u"s", inputs = (; parents = ()))))
+    vtab = joinpath(dir, "v.tab")
+    open(vtab, "w") do io
+        println(io, "Time\tv")
+        foreach(t -> println(io, t, "\t", 10t), 0:2)
+    end
+    r3r = run_model(r3; inputs = (; parents = (series_file(vtab),)))
+    @test r3r[:h] == [0.0, 0.0, 10.0, 10.0, 20.0]
+    @test r3r[:n] == [0.0, 10.0, 10.0, 20.0, 20.0]
 end
 
 @testset "DSL: a model precompiled in a package" begin

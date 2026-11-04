@@ -7,6 +7,7 @@ import NaNMath
 using FunctionWrappers: FunctionWrapper
 using NCDatasets
 using Random
+using SpecialFunctions: erfc
 using Symbolics
 using XLSX
 using LibXLS
@@ -50,14 +51,14 @@ function check_compat(built_with::VersionNumber)
     end
 end
 
-export pysd_trunc, pysd_log_base, pysd_ln, pysd_sqrt, pysd_asin, pysd_acos,
+export pysd_trunc, pysd_ln, pysd_sqrt, pysd_asin, pysd_acos,
        pysd_exp, pysd_sin, pysd_cos, pysd_tan, pysd_atan, pysd_sinh, pysd_cosh,
        pysd_xidz, pysd_zidz,
        pysd_pulse, pysd_pulse_train, pysd_ramp, pysd_step,
        pysd_active_initial, pysd_ifelse,
        pysd_inv_mat2d_elem, pysd_inv_mat3d_elem,
-       pysd_invert_matrix, pysd_elmcount, pysd_sum, pysd_sum_seq,
-       pysd_power, pysd_quantum, pysd_pi,
+       pysd_invert_matrix, pysd_sum, pysd_sum_seq,
+       pysd_power, pysd_quantum,
        pysd_xpulse, pysd_xpulse_train, pysd_xramp,
        pysd_random_0_1, pysd_random_uniform,
        pysd_random_normal, pysd_random_exponential,
@@ -86,6 +87,7 @@ export @equations, EquationSet, Model, run_model, Results, StatefulOperator, exc
 
 include("libm.jl")
 include("helpers.jl")
+include("deprecated.jl")
 include("xlsx.jl")
 include("latex.jl")
 include("save_results.jl")

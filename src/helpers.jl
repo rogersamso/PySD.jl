@@ -17,7 +17,6 @@ pysd_ln(x) = NaNMath.log(x)
 pysd_sqrt(x) = NaNMath.sqrt(x)
 pysd_asin(x) = NaNMath.asin(x)
 pysd_acos(x) = NaNMath.acos(x)
-pysd_log_base(x, base) = pysd_ln(x) / pysd_ln(base)
 
 # Numbers go to the C maths library, as in Python PySD (libm.jl); symbolic
 # variables (MTK) and other number types to Julia's functions.
@@ -186,8 +185,6 @@ end
 pysd_invert_matrix(m::AbstractArray, n) = vec(_numpy_inv(reshape(m, Int(n), Int(n))))
 pysd_invert_matrix(m, n) = m
 
-pysd_elmcount(n) = Float64(n)
-
 # Vensim POWER, also used for `^`: x^y.  A negative base with a non-integer
 # exponent gives NaN (as numpy.power) instead of throwing a DomainError.
 pysd_power(x, y) = x < 0 && !isinteger(y) ? oftype(float(x) * y, NaN) : float(x)^y
@@ -217,8 +214,6 @@ pysd_safe(x) = x
 
 pysd_quantum(a, b) = ifelse(b < 1e-6, float(a), b * pysd_trunc(a / b))
 @register_symbolic pysd_quantum(a::Real, b::Real)
-
-pysd_pi() = Base.MathConstants.pi
 
 # XMILE variants: Xpulse has (start, magnitude), Xramp has (slope, start)
 # XMILE PULSE(magnitude, start[, interval]): `magnitude / time_step` during one
@@ -509,11 +504,8 @@ function _pysd_demand_at_price(q0, pprofile, ppriority, pwidth, x)
         else
             return 2.0 * q0 * (hi - x)^2 / pwidth^2
         end
-    elseif prof == 3  # normal (uses erfc from SpecialFunctions via Symbolics)
-        # erfc(x) ≈ 2*Φ(-x*sqrt(2)) where Φ is the standard normal CDF
-        # We approximate using a rational fit (max error < 1e-7)
-        t = (x - ppriority) / (pwidth * sqrt(2.0))
-        return q0 * 0.5 * _pysd_erfc(t)
+    elseif prof == 3  # normal: as Python PySD (math.erfc)
+        return q0 * 0.5 * (2 - erfc((ppriority - x) / (sqrt(2) * pwidth)))
     elseif prof == 4  # exponential
         if x < ppriority
             return q0 * (1.0 - 0.5 * exp((x - ppriority) / pwidth))
@@ -605,18 +597,6 @@ function pysd_build_tab_itp(vals::AbstractVector, times::AbstractVector, method:
             extrapolation_left=ExtrapolationType.Constant,
             extrapolation_right=ExtrapolationType.Constant)
     end
-end
-
-# Abramowitz & Stegun approximation for erfc (max error < 1.5e-7)
-function _pysd_erfc(x)
-    t = 1.0 / (1.0 + 0.3275911 * abs(x))
-    poly = t * (0.254829592 +
-           t * (-0.284496736 +
-           t * (1.421413741 +
-           t * (-1.453152027 +
-           t * 1.061405429))))
-    y = poly * exp(-x * x)
-    return x >= 0.0 ? y : 2.0 - y
 end
 
 function pysd_allocate_available(

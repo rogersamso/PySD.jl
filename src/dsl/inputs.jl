@@ -52,20 +52,29 @@ data(s::ExcelSheet, time::AbstractString, cells::AbstractString; method::Symbol 
     SeriesCells(s, String(time), String(cells), method)
 
 """
-    data(parents, name)
+    data(parents, name; method = :interpolate)
 
 A data series from outside the model (Vensim's data variables without an
 equation): `parents` is an input given to `Model` and to the run, a tuple of
 sources, and `name` the series' name; the first source that has it gives it.
 A source is a run of another model (`run_model(world)`) or a file of series
 ([`series_file`](@ref)).  Called with time, `d(t)`, it interpolates linearly
-between the source's times; with dimensions, they line up by name.
+between the source's times (or as Vensim's keyword `method`, as for Excel
+data); with dimensions, they line up by name.
 """
-data(parents, name::Symbol) = ParentSeries(parents, name)
+data(parents, name::Symbol; method::Symbol = :interpolate) = ParentSeries(parents, name, method)
 
 struct ParentSeries
     parents::Any
     name::Symbol
+    method::Symbol
+end
+
+# a series from its times and values, as Vensim's keyword says (as the data
+# read from Excel)
+function _series(time, ys, method::Symbol)
+    xs, vs = _clean_series(collect(Float64, time), collect(Float64, ys), method)
+    return pysd_build_tab_itp(vs, xs, method)
 end
 
 _sources(c::ParentSeries) = c.parents isa Union{Results,SeriesFile} ? (c.parents,) : Tuple(c.parents)
@@ -90,20 +99,20 @@ function _from_sources(c::ParentSeries, dims::Tuple)
     r = _parent(c)
     r === nothing && return isempty(dims) ? NoParent(c.name) :
                             LookupArray(DimArray(fill(NoParent(c.name), map(length, dims)), dims))
-    return _series_of(r, c.name, dims)
+    return _series_of(r, c.name, dims, c.method)
 end
 
 # --- from a run: its saved times ---------------------------------------------------
 
 _has_series(r, name) = haskey(r, name)
 
-function _series_of(r, name, dims::Tuple)
+function _series_of(r, name, dims::Tuple, method::Symbol)
     x = r[name]
     v = r.model.byname[name]
     v.kind in (:parameter, :constant) && (x = fill(x, length(r.time)))       # a constant
-    isempty(dims) && return PiecewiseLinear(r.time, Float64.(x))
+    isempty(dims) && return _series(r.time, Float64.(x), method)
     vals = stack(parent.(x))                                                # the elements, then time
-    series = [PiecewiseLinear(r.time, Float64.(vals[I, :])) for I in CartesianIndices(map(length, v.dims))]
+    series = [_series(r.time, Float64.(vals[I, :]), method) for I in CartesianIndices(map(length, v.dims))]
     return _with_dims(LookupArray(DimArray(series, v.dims)), dims)         # in this model's order
 end
 
@@ -156,11 +165,11 @@ _julia_label(s) = Symbol(_clean(s))
 
 _has_series(f::SeriesFile, name) = haskey(f.series, name)
 
-function _series_of(f::SeriesFile, name, dims::Tuple)
+function _series_of(f::SeriesFile, name, dims::Tuple, method::Symbol)
     cols = f.series[name]
     if isempty(dims)
         haskey(cols, Symbol[]) || error("`$name` in $(basename(f.path)) has elements; the model has none")
-        return PiecewiseLinear(f.time, cols[Symbol[]])
+        return _series(f.time, cols[Symbol[]], method)
     end
     labels = [Symbol.(_labels(d)) for d in dims]
     # the file's elements in the model's order of the dimensions, or in another
@@ -170,7 +179,7 @@ function _series_of(f::SeriesFile, name, dims::Tuple)
     order === nothing && error("`$name` in $(basename(f.path)): not every element of " *
                                "$(_dimstr(dims)) has a column")
     p = _permutations(length(dims))[order]
-    series = [PiecewiseLinear(f.time, cols[[labels[p[k]][I[p[k]]] for k in eachindex(p)]])
+    series = [_series(f.time, cols[[labels[p[k]][I[p[k]]] for k in eachindex(p)]], method)
               for I in CartesianIndices(map(length, dims))]
     return LookupArray(DimArray(series, dims))
 end
