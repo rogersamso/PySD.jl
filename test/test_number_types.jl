@@ -12,8 +12,8 @@ _allocs(f::F, args::Vararg{Any,N}) where {F,N} = (f(args...); @allocated f(args.
         @inferred pysd_zidz(one(x), x)
         @inferred pysd_xidz(one(x), x, zero(x))
         @inferred pysd_power(x, 2.5)
-        @inferred pysd_exp(x)
-        @inferred pysd_ln(x)
+        @inferred PythonMath.exp(x)
+        @inferred PythonMath.log(x)
         @inferred pysd_step(2.0, x, 1.0)
         @inferred pysd_pulse(x, 1.0, 2.0)
         @inferred pysd_ramp(x, 1.0, 0.0)
@@ -31,21 +31,21 @@ end
     @test _allocs(pysd_sum_seq, v) == 0
     @test _allocs(pysd_sum, [Dual(x, 1.0) for x in v]) == 0
     @test _allocs(pysd_zidz, 1.0, 2.0) == 0
-    @test _allocs(pysd_exp, 2.0) == 0
+    @test _allocs(PythonMath.exp, 2.0) == 0
     @test _allocs(pysd_power, 2.0, 2.5) == 0
 end
 
 @testset "derivatives (ForwardDiff) and uncertainties (Measurements)" begin
     @test derivative(x -> pysd_zidz(1.0, x), 2.0) ≈ -0.25
     @test derivative(x -> pysd_zidz(1.0, x), 0.0) == 0.0
-    @test derivative(pysd_exp, 1.0) ≈ exp(1.0)
-    @test derivative(pysd_ln, 2.0) ≈ 0.5
+    @test derivative(PythonMath.exp, 1.0) ≈ exp(1.0)
+    @test derivative(PythonMath.log, 2.0) ≈ 0.5
     @test derivative(x -> pysd_power(x, 2.5), 4.0) ≈ 2.5 * 4.0^1.5
     @test isnan(value(pysd_power(Dual(-4.0, 1.0), 2.5)))   # NaN as numpy, not an error
     @test derivative(x -> pysd_sum([x, 2x, 3x]), 1.0) == 6.0
     @test derivative(x -> pysd_sum(fill(x, 200)), 1.0) == 200.0
     @test derivative(x -> pysd_sum_seq([x, 2x]), 1.0) == 3.0
-    @test uncertainty(pysd_ln(2.0 ± 0.1)) ≈ 0.05
+    @test uncertainty(PythonMath.log(2.0 ± 0.1)) ≈ 0.05
     @test uncertainty(pysd_sum([1.0 ± 0.3, 2.0 ± 0.4])) ≈ 0.5
 end
 

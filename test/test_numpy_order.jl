@@ -48,17 +48,17 @@ end
 # Cases where Julia's own functions differ from numpy in the last digit
 # (numpy 2.4 on Linux, which calls glibc's maths library, as PySD.jl does).
 const LIBM_CASES = [
-    (pysd_exp, -18.995666427080103, 5.627129250383538e-9),
-    (pysd_exp, 0.6127620313743094, 1.845521754672559),
-    (pysd_ln, 912.0552334101783, 6.815700551190227),
-    (pysd_sin, 0.6130224416856791, 0.575342178051223),
-    (pysd_cos, 14.8878187209734, -0.68211551524249),
-    (pysd_tan, 11.995181042198134, -0.6426481299471215),
-    (pysd_atan, -2.602097910994317, -1.2038926524277114),
-    (pysd_sinh, 12.20011694981521, 99406.20042595758),
-    (pysd_cosh, -18.600899082988622, 5.987393954729876e7),
-    (pysd_asin, -0.6276839870974102, -0.6785745404429159),
-    (pysd_acos, -0.7164396155192634, 2.3694817767537173),
+    (PythonMath.exp, -18.995666427080103, 5.627129250383538e-9),
+    (PythonMath.exp, 0.6127620313743094, 1.845521754672559),
+    (PythonMath.log, 912.0552334101783, 6.815700551190227),
+    (PythonMath.sin, 0.6130224416856791, 0.575342178051223),
+    (PythonMath.cos, 14.8878187209734, -0.68211551524249),
+    (PythonMath.tan, 11.995181042198134, -0.6426481299471215),
+    (PythonMath.atan, -2.602097910994317, -1.2038926524277114),
+    (PythonMath.sinh, 12.20011694981521, 99406.20042595758),
+    (PythonMath.cosh, -18.600899082988622, 5.987393954729876e7),
+    (PythonMath.asin, -0.6276839870974102, -0.6785745404429159),
+    (PythonMath.acos, -0.7164396155192634, 2.3694817767537173),
 ]
 const POW_CASES = [
     (591.1111787175414, 0.3194888276189074, 7.682761201254199),
@@ -75,9 +75,9 @@ const POW_CASES = [
     end
     @test exp(0.6127620313743094) != 1.845521754672559 || !exact   # why this is needed
     # out of the domain: NaN, as numpy
-    @test isnan(pysd_ln(-1.0)) && isnan(pysd_asin(2.0)) && isnan(pysd_power(-8.0, 1 / 3))
+    @test isnan(PythonMath.log(-1.0)) && isnan(PythonMath.asin(2.0)) && isnan(pysd_power(-8.0, 1 / 3))
     @test pysd_power(-8.0, 3) === -512.0 && pysd_power(2, 3) === 8.0
-    @test pysd_exp(1) === pysd_exp(1.0)
+    @test PythonMath.exp(1) === PythonMath.exp(1.0)
 end
 
 @testset "elements a model does not define: NaN" begin
