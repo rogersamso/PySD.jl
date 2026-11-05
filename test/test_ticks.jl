@@ -43,6 +43,17 @@ using SciMLBase: ODEProblem, solve
     pysd_end_tick!(T)
     pysd_free_ticks!(T)
     @test pysd_fixed_delay(T, 3, 2, 7.0, 0.5) == 5.0
+
+    # what is fixed at the first tick: called only while it is recorded
+    T = PySDTicks(0.0, 0.5)
+    calls = Ref(0)
+    bump() = (calls[] += 1)
+    pysd_at_first_tick(bump, T)                       # before a run
+    pysd_begin_tick!(T, 0.0); pysd_at_first_tick(bump, T); pysd_end_tick!(T)
+    pysd_at_first_tick(bump, T)                       # held, after it
+    pysd_begin_tick!(T, 0.5); pysd_at_first_tick(bump, T); pysd_end_tick!(T)
+    @test calls[] == 1
+    @test pysd_at_first_tick(bump, T) === nothing
 end
 
 @testset "Ticks: a translated ODE model, with any solver" begin

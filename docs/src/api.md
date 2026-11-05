@@ -59,9 +59,9 @@ pysd_export_latex
 
 ## Helpers for translated ODE and MTK models
 
-Models translated with PySD's older backends (`backend="ode"` or `"mtk"`)
-are plain Julia ODE functions or ModelingToolkit systems that call these
-helpers.  Models written with `@equations`, or translated with
+Models translated with PySD's `backend="mtk"` are ModelingToolkit systems
+that call these helpers, as do plain Julia ODE functions translated with its
+former `backend="ode"`.  Models written with `@equations`, or translated with
 `backend="dsl"`, don't need them.
 
 ### Helpers for Vensim functions
@@ -74,13 +74,16 @@ helpers.  Models written with `@equations`, or translated with
 | `pysd_pulse_train(t, start, interval, width, end)` | `PULSE TRAIN` |
 | `pysd_ramp(t, slope, start, end)` | `RAMP` |
 | `pysd_step(t, height, step_time)` | `STEP` |
-| `pysd_ln(x) / pysd_ln(base)` | `LOG` |
+| `PythonMath.exp(x)`, `PythonMath.log(x)`, `PythonMath.sin(x)`, … | `EXP`, `LN`, `SIN`, … with Python PySD's digits |
+| `PythonMath.log(x) / PythonMath.log(base)` | `LOG` |
+| `trunc(x)`; in ModelingToolkit equations `ifelse(x < 0, ceil(x), floor(x))`, as Symbolics has no symbolic `trunc` | `INTEGER` |
 | `pysd_logical_and(a, b)`, `pysd_logical_or(a, b)`, `pysd_logical_not(a)` | `:AND:`, `:OR:`, `:NOT:` |
 | `pysd_random_0_1()`, `pysd_random_uniform(…)`, `pysd_random_normal(…)`, `pysd_random_exponential(…)` | the `RANDOM` functions (a new number at every evaluation) |
 | `pysd_vector_sort_order`, `pysd_vector_rank`, `pysd_vector_reorder` | the `VECTOR` functions |
 | `pysd_allocate_by_priority`, `pysd_allocate_available` | `ALLOCATE BY PRIORITY`, `ALLOCATE AVAILABLE` |
 
 ```@docs
+PythonMath
 pysd_vector_select
 pysd_not_implemented
 ```
@@ -99,7 +102,7 @@ pysd_build_tab_itp
 
 ### Changing a model's inputs between runs
 
-A generated ODE model's `params(; name = value, ...)` builds its constants,
+A model translated with PySD's former ODE backend: its `params(; name = value, ...)` builds its constants,
 lookups and data with the given values in place of its own (see PySD's
 documentation, "Scenarios").
 

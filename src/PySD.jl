@@ -51,8 +51,7 @@ function check_compat(built_with::VersionNumber)
     end
 end
 
-export pysd_trunc, pysd_ln, pysd_sqrt, pysd_asin, pysd_acos,
-       pysd_exp, pysd_sin, pysd_cos, pysd_tan, pysd_atan, pysd_sinh, pysd_cosh,
+export PythonMath,
        pysd_xidz, pysd_zidz,
        pysd_pulse, pysd_pulse_train, pysd_ramp, pysd_step,
        pysd_active_initial, pysd_ifelse,
@@ -75,7 +74,7 @@ export pysd_trunc, pysd_ln, pysd_sqrt, pysd_asin, pysd_acos,
        pysd_not_implemented, pysd_input, pysd_lookup, pysd_check_inputs, pysd_check_fixed, pysd_file, PySDFunction,
        save_results,
        check_compat, PYSD_JL_VERSION,
-       PySDTicks, PySDRecord, pysd_reset_ticks!, pysd_begin_tick!, pysd_end_tick!, pysd_fixed_delay,
+       PySDTicks, PySDRecord, pysd_reset_ticks!, pysd_begin_tick!, pysd_end_tick!, pysd_at_first_tick, pysd_fixed_delay,
        pysd_sampled, pysd_tick_time, pysd_record!, pysd_ticks_callback, pysd_free_ticks!,
        pysd_tick_uniform, pysd_tick_normal, pysd_tick_exponential
 
@@ -86,6 +85,7 @@ export @equations, EquationSet, Model, run_model, Results, StatefulOperator, exc
        series_file, @precompile_model, @u_str, NoUnits, PySDUnits
 
 include("libm.jl")
+include("pythonmath.jl")
 include("helpers.jl")
 include("deprecated.jl")
 include("xlsx.jl")

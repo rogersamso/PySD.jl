@@ -3,7 +3,7 @@
 using DimensionalData: Dim, At, AbstractDimArray, DimArray, DimStack, Ti, dims, broadcast_dims
 import Tables
 using ForwardDiff: jacobian
-using PySD: pysd_exp, pysd_ln, pysd_power, pysd_sin, pysd_sum, pysd_sum_seq
+using PySD: pysd_power, pysd_sum, pysd_sum_seq
 using LinearAlgebra: I
 include(joinpath(@__DIR__, "dsl", "check.jl"))
 
@@ -290,14 +290,14 @@ end
     jl = run_model(Model(mod.numerics_example; time = 0:0.5:1, time_unit = u"s"))
     x0 = collect(range(0.1, 3.0; length = 200))
     x = x0 .+ 1.0                                                  # x .+ t at t = 1
-    @test parent(py[:e][end]) == pysd_exp.(x)                      # the C maths library
+    @test parent(py[:e][end]) == PythonMath.exp.(x)                      # the C maths library
     @test parent(jl[:e][end]) == exp.(x)                           # Julia's
     @test parent(py[:e][end]) != parent(jl[:e][end])               # they differ in the last digit, sometimes
-    @test parent(py[:l][end]) == pysd_ln.(x)
+    @test parent(py[:l][end]) == PythonMath.log.(x)
     @test parent(py[:p][end]) == pysd_power.(x, 1.7)
-    @test parent(py[:s][end]) == pysd_sin.(x0 .* 3 .+ 1)
+    @test parent(py[:s][end]) == PythonMath.sin.(x0 .* 3 .+ 1)
     # numpy's order of additions: pairwise along the last dimension, one after the other along others
-    M = [pysd_sin(a * b) for a in 1:3, b in 1:200] .* 2
+    M = [PythonMath.sin(a * b) for a in 1:3, b in 1:200] .* 2
     @test parent(py[:sum_last][end]) == [pysd_sum(M[i, :]) for i in 1:3]
     @test parent(py[:sum_first][end]) == [pysd_sum_seq(M[:, c]) for c in 1:200]
     @test py[:total][end] == pysd_sum(x0 .* 2)

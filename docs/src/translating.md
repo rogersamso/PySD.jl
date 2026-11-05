@@ -26,10 +26,11 @@ import pysd
 pysd.translate_to_julia("my_model.mdl", backend="dsl", split_views=True)
 ```
 
-- `backend="dsl"` writes PySD.jl's language.  (The other backends, `"ode"`
-  and `"mtk"`, write an older form: a plain ODE function or a
-  ModelingToolkit system, which call the helpers listed under
-  [Helpers for translated ODE and MTK models](@ref).)
+- `backend="dsl"` (the default) writes PySD.jl's language.  The other
+  backend, `"mtk"`, writes a ModelingToolkit system, which calls the
+  helpers listed under [Helpers for translated ODE and MTK models](@ref).
+  (PySD's `"ode"` backend, a plain ODE function, was removed; models
+  translated with it still run with these helpers.)
 - `split_views=True` writes one file per view of the Vensim sketch, as the
   modeller grouped the equations.  Without it, one file holds them all.
 

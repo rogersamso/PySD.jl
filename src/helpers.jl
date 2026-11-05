@@ -4,32 +4,14 @@
 # they remain valid when called with symbolic (Num) arguments inside MTK
 # equations.
 
-# Base.trunc is not available as a symbolic primitive in MTK.
-# Register a thin wrapper so INTEGER(x) / INT(x) works inside equations.
-pysd_trunc(x::Real) = Base.trunc(x)
-@register_symbolic pysd_trunc(x::Real)
-
-# Logarithms, square roots and inverse trigonometric functions give NaN out of
-# their domain (log(-1), sqrt(-1), asin(2)), as numpy in Python PySD, instead
-# of an error.  IF THEN ELSE computes both branches, so the branch that is not
-# taken may be out of the domain.  NaNMath's functions are symbolic for MTK.
-pysd_ln(x) = NaNMath.log(x)
-pysd_sqrt(x) = NaNMath.sqrt(x)
-pysd_asin(x) = NaNMath.asin(x)
-pysd_acos(x) = NaNMath.acos(x)
-
-# Numbers go to the C maths library, as in Python PySD (libm.jl); symbolic
-# variables (MTK) and other number types to Julia's functions.
+# Numbers that go to the C maths library, as in Python PySD (libm.jl; the
+# functions themselves are in PythonMath).
 const _CNum = Union{Float64,Int}
-pysd_ln(x::_CNum) = _c_log(Float64(x))
-pysd_asin(x::_CNum) = _c_asin(Float64(x))
-pysd_acos(x::_CNum) = _c_acos(Float64(x))
-for (f, c) in ((:exp, :_c_exp), (:sin, :_c_sin), (:cos, :_c_cos), (:tan, :_c_tan),
-               (:atan, :_c_atan), (:sinh, :_c_sinh), (:cosh, :_c_cosh))
-    name = Symbol(:pysd_, f)
-    @eval $name(x) = $f(x)
-    @eval $name(x::_CNum) = $c(Float64(x))
-end
+
+# INTEGER: Julia's trunc, of which Symbolics has no method, so that models
+# translated for ModelingToolkit with pysd_trunc (deprecated) still build
+_trunc(x) = trunc(x)
+_trunc(x::Num) = ifelse(x < 0, ceil(x), floor(x))
 
 # What Vensim considers zero.  Times accumulated by fixed Euler steps carry
 # rounding errors, so pulses start up to SMALL_VENSIM early (as in Python PySD).
@@ -212,7 +194,7 @@ end
 pysd_safe(x::AbstractArray) = SafeArray(x)
 pysd_safe(x) = x
 
-pysd_quantum(a, b) = ifelse(b < 1e-6, float(a), b * pysd_trunc(a / b))
+pysd_quantum(a, b) = ifelse(b < 1e-6, float(a), b * trunc(a / b))
 @register_symbolic pysd_quantum(a::Real, b::Real)
 
 # XMILE variants: Xpulse has (start, magnitude), Xramp has (slope, start)

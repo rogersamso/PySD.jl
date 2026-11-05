@@ -75,6 +75,20 @@ pysd_begin_tick!(T::PySDTicks, t) = (T.tick += 1; T.held = false; push!(T.times,
 pysd_end_tick!(T::PySDTicks) = (T.held = true; T)
 
 """
+    pysd_at_first_tick(f, ticks)
+
+Call `f()` while the first tick is being recorded, for what is fixed there:
+a fixed delay whose initial value is an expression keeps its value at the
+start, so a model whose delays are not otherwise computed at the first tick
+(ModelingToolkit: only what a solver needs) computes them in `f`.
+
+    pysd_at_first_tick(_ticks) do
+        _initials(u, p, t)
+    end
+"""
+pysd_at_first_tick(f, T::PySDTicks) = (T.tick == 0 && !T.held && f(); nothing)
+
+"""
     pysd_fixed_delay(ticks, key, n, init, t, I...)
 
 DELAY FIXED: the input recorded `n` ticks before the tick at `t`, or, before

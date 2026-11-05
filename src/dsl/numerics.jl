@@ -6,9 +6,9 @@
 # the ordinary names; only the generated code calls PySD.jl's functions.
 
 const _PYTHON_FUNCTIONS = Dict{Any,Any}(
-    :exp => pysd_exp, :log => pysd_ln, :sin => pysd_sin, :cos => pysd_cos, :tan => pysd_tan,
-    :atan => pysd_atan, :asin => pysd_asin, :acos => pysd_acos, :sinh => pysd_sinh,
-    :cosh => pysd_cosh, :sqrt => pysd_sqrt, :^ => pysd_power)
+    (f => getfield(PythonMath, f) for f in (:exp, :log, :sqrt, :sin, :cos, :tan, :asin, :acos,
+                                            :atan, :sinh, :cosh))...,
+    :^ => pysd_power)
 
 _python(f, numerics) = numerics === :python ? get(_PYTHON_FUNCTIONS, f, f) : f
 

@@ -4,6 +4,41 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## 0.10.0 (2026-11-05)
+
+### Added
+
+- `pysd_at_first_tick(f, T)` calls `f()` at the first tick only (tick 0, not
+  held).  ModelingToolkit models translated by PySD use it to fix the
+  initial value of a DELAY FIXED whose initial value is an expression, so
+  the other delays are no longer computed at every tick.
+
+### Changed
+
+- **The maths functions with Python PySD's digits are `PythonMath`'s**, by
+  Julia's names: `PythonMath.exp`, `log`, `sqrt`, `sin`, `cos`, `tan`, `asin`,
+  `acos`, `atan`, `sinh` and `cosh` (the C maths library for `Float64` and
+  `Int`, NaN out of the domain as numpy, Julia's functions for other types).
+  One exported name, `PythonMath`, in place of twelve.  The DSL's
+  `numerics = :python` uses them.
+
+### Deprecated
+
+- `pysd_exp`, `pysd_ln`, `pysd_sqrt`, `pysd_sin`, `pysd_cos`, `pysd_tan`,
+  `pysd_asin`, `pysd_acos`, `pysd_atan`, `pysd_sinh`, `pysd_cosh` (use
+  `PythonMath`'s) and `pysd_trunc` (use `trunc`; in ModelingToolkit
+  equations `ifelse(x < 0, ceil(x), floor(x))`, as Symbolics has no symbolic
+  `trunc`).  Models translated before still run, with a warning; they go in
+  1.0.
+
+### Compatibility
+
+- Models translated with PySD for PySD.jl 0.10.0 call `PythonMath`; older
+  translations run unchanged.
+- PySD's translator now writes the DSL by default and drops its `"ode"`
+  backend (`"mtk"` remains).  Models translated with the `"ode"` backend
+  before still run: the helpers they call stay.
+
 ## 0.9.0 (2026-11-04)
 
 ### Added

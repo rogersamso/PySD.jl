@@ -65,14 +65,21 @@ end
     @test isequal(PySD.Symbolics.substitute(pysd_xidz(6.0, y_zidz, 5.0), Dict(y_zidz => 3.0)), 2.0)
     @test PySD._to_float(" 0.1 ") == 0.1
     @test isnan(PySD._to_float("Years"))
-    @test pysd_trunc(2.7) == 2.0
-    @test pysd_trunc(-2.7) == -2.0
+    @test PySD._trunc(2.7) == 2.0
+    @test PySD._trunc(-2.7) == -2.0
+    PySD.Symbolics.@variables y_trunc
+    @test isequal(PySD.Symbolics.substitute(PySD._trunc(y_trunc), Dict(y_trunc => -2.7)), -2.0)
     @test (@test_deprecated pysd_log_base(8.0, 2.0)) ≈ 3.0
     @test pysd_quantum(7.5, 2.0) == 6.0
     @test pysd_quantum(-7.5, 2.0) == -6.0
     @test pysd_quantum(3.0, 0.0) == 3.0          # Vensim: B <= 0 returns A
     @test (@test_deprecated pysd_elmcount(3)) === 3.0
     @test (@test_deprecated pysd_pi()) ≈ π
+    # the maths functions, now PythonMath's (0.10.0)
+    @test (@test_deprecated pysd_trunc(-2.7)) == -2.0
+    @test (@test_deprecated pysd_ln(1.0)) == 0.0
+    @test (@test_deprecated pysd_exp(1.0)) === PythonMath.exp(1.0)
+    @test isnan(@test_deprecated pysd_sqrt(-1.0))
     @test pysd_power(2.0, 3.0) == 8.0
     @test pysd_power(-2.0, 3.0) == -8.0
     # Vensim POWER / numpy.power (also used for `^`): (-2)^2 = 4
@@ -422,14 +429,14 @@ include("test_threads.jl")
 include("test_ticks.jl")
 
 @testset "out of the domain: NaN, as numpy" begin
-    @test pysd_ln(1.0) == 0.0 && isnan(pysd_ln(-1.0))
-    @test pysd_sqrt(4.0) == 2.0 && isnan(pysd_sqrt(-4.0))
-    @test pysd_asin(1.0) ≈ pi / 2 && isnan(pysd_asin(2.0))
-    @test pysd_acos(1.0) == 0.0 && isnan(pysd_acos(-2.0))
-    @test pysd_ln(100.0) / pysd_ln(10.0) ≈ 2.0 && isnan(pysd_ln(-100.0) / pysd_ln(10.0))
+    @test PythonMath.log(1.0) == 0.0 && isnan(PythonMath.log(-1.0))
+    @test PythonMath.sqrt(4.0) == 2.0 && isnan(PythonMath.sqrt(-4.0))
+    @test PythonMath.asin(1.0) ≈ pi / 2 && isnan(PythonMath.asin(2.0))
+    @test PythonMath.acos(1.0) == 0.0 && isnan(PythonMath.acos(-2.0))
+    @test PythonMath.log(100.0) / PythonMath.log(10.0) ≈ 2.0 && isnan(PythonMath.log(-100.0) / PythonMath.log(10.0))
     # the branch IF THEN ELSE does not take may be out of the domain
     x = -27.9
-    @test pysd_ifelse(x < 0.1, 0.0, 0.434294 * pysd_ln(x) + 1.0) == 0.0
+    @test pysd_ifelse(x < 0.1, 0.0, 0.434294 * PythonMath.log(x) + 1.0) == 0.0
 end
 
 @testset "named ranges local to several sheets" begin
