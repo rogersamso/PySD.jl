@@ -59,9 +59,9 @@ pysd_export_latex
 
 ## Helpers for translated ODE and MTK models
 
-Models translated with PySD's older backends (`backend="ode"` or `"mtk"`)
-are plain Julia ODE functions or ModelingToolkit systems that call these
-helpers.  Models written with `@equations`, or translated with
+Models translated with PySD's `backend="mtk"` are ModelingToolkit systems
+that call these helpers, as do plain Julia ODE functions translated with its
+former `backend="ode"`.  Models written with `@equations`, or translated with
 `backend="dsl"`, don't need them.
 
 ### Helpers for Vensim functions
@@ -102,7 +102,7 @@ pysd_build_tab_itp
 
 ### Changing a model's inputs between runs
 
-A generated ODE model's `params(; name = value, ...)` builds its constants,
+A model translated with PySD's former ODE backend: its `params(; name = value, ...)` builds its constants,
 lookups and data with the given values in place of its own (see PySD's
 documentation, "Scenarios").
 

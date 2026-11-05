@@ -35,6 +35,9 @@ and the tests run before it.
 
 - Models translated with PySD for PySD.jl 0.10.0 call `PythonMath`; older
   translations run unchanged.
+- PySD's translator now writes the DSL by default and drops its `"ode"`
+  backend (`"mtk"` remains).  Models translated with the `"ode"` backend
+  before still run: the helpers they call stay.
 
 ## 0.9.0 (2026-11-04)
 
