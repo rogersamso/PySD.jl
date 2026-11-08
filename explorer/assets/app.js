@@ -218,7 +218,11 @@ function restorePrefs() {
   } catch (e) { /* no storage: fine */ }
   setColumns();
 }
-function setColumns() { $("#panels").className = "panels cols-" + $("#columns").value; }
+// (Plotly keeps a plot's size until told: resize them once the grid has its new columns)
+function setColumns() {
+  $("#panels").className = "panels cols-" + $("#columns").value;
+  requestAnimationFrame(() => document.querySelectorAll("#panels .plot").forEach((p) => { if (p.data) Plotly.Plots.resize(p); }));
+}
 
 // ---------------------------------------------------------------- tree of sets
 function renderTree() {
