@@ -717,6 +717,8 @@ function renderRunsTable() {
       el("td", { class: "changes" }, changesText(r) || "—"),
       el("td", { class: "static-hide" },
         el("button", { class: "ghost", title: "Start a new run from this one's changes", onclick: () => editFrom(r) }, "Edit copy"),
+        el("a", { class: "button ghost", href: "api/runs/" + encodeURIComponent(r.id) + "/csv", download: "",
+          title: "All its results, a row per name (or element), a column per time" }, "CSV"),
         own && r.owner !== "" ? el("button", { class: "ghost", title: r.shared ? "Only you will see it" : "Everyone will see it",
           onclick: () => changeRun(r, { shared: !r.shared }) }, r.shared ? "Unshare" : "Share") : null,
         own ? el("button", { class: "ghost", title: "Rename", onclick: () => renameRun(r) }, "Rename") : null,

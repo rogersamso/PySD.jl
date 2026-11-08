@@ -84,6 +84,13 @@ function routes(ex::Explorer)
     end)
     on("PATCH", "/api/runs/{id}", (req, u) -> _json_response(_public(change_run!(ex, u, _param(req, "id"), _body(req)))))
     on("DELETE", "/api/runs/{id}", (req, u) -> (delete_run!(ex, u, _param(req, "id")); _json_response(Dict("deleted" => true))))
+    on("GET", "/api/runs/{id}/csv", (req, u) -> begin
+        id = _param(req, "id")
+        csv = run_csv(ex, u, id)
+        name = replace(get(ex.runs[id].meta, "label", id), r"[^A-Za-z0-9_\- ]" => "_")
+        HTTP.Response(200, ["Content-Type" => "text/csv; charset=utf-8", "Cache-Control" => "no-store",
+                            "Content-Disposition" => "attachment; filename=\"$(name).csv\""], csv)
+    end)
     on("GET", "/api/series", (req, u) -> begin
         q = _query(req)
         _json_response(series(ex, u, q["name"], split(get(q, "runs", ""), ','; keepempty = false)))

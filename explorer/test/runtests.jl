@@ -143,6 +143,17 @@ end
     @test !(id in [r.id for r in call("GET", "/api/runs", "joan")[2]])
     @test id in [r.id for r in call("GET", "/api/runs", "roger")[2]]   # administrators see all
     @test isempty(call("GET", "/api/series?name=mean_temperature&runs=$id", "joan")[2].runs)
+    # its results as CSV: its owner (and administrators), not others
+    resp = router(HTTP.Request("GET", "/api/runs/$id/csv", ["X-PySD-User" => "ana"]))
+    @test resp.status == 200 && occursin("Ana", HTTP.header(resp, "Content-Disposition"))
+    lines = split(String(resp.body), '\n'; keepempty = false)
+    @test startswith(lines[1], "# Ana's (") && occursin("room_temperature = 40", lines[1])
+    @test startswith(lines[2], "name,unit,0.0,1.0")
+    row = split(first(filter(l -> startswith(l, "teacup_temperature[north],"), lines)), ',')
+    @test row[2] == "°F" && parse(Float64, row[3]) == 180.0 && length(row) == 2 + 31
+    @test length(lines) == 2 + length(ex.runs[id].columns)
+    @test router(HTTP.Request("GET", "/api/runs/$id/csv", ["X-PySD-User" => "joan"])).status == 404
+    @test router(HTTP.Request("GET", "/api/runs/$id/csv", ["X-PySD-User" => "roger"])).status == 200
     @test call("GET", "/api/jobs/$(job.id)", "joan")[1] == 404         # nor her jobs
     @test call("PATCH", "/api/runs/$id", "joan", Dict("shared" => true))[1] == 404
     @test call("PATCH", "/api/runs/$id", "ana", Dict("shared" => true))[1] == 200

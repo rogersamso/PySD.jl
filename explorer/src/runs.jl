@@ -158,6 +158,36 @@ function change_run!(ex::Explorer, user, id, change)
     return r
 end
 
+"""
+    run_csv(ex, user, id) -> String
+
+A run's results as CSV: a row per name (an array: a row per element,
+`x[a,b]`), its unit, then its value at each time; first, the run's label
+and what it changed.
+"""
+function run_csv(ex::Explorer, user, id)
+    r = _visible_run(ex, user, id)
+    q(x) = (x = string(x); any(c -> c in (',', '"', '\n', '\r'), x) ? "\"" * replace(x, "\"" => "\"\"") * "\"" : x)
+    num(x) = isfinite(x) ? string(x) : ""
+    io = IOBuffer()
+    changes = join(vcat(["$k = $(v isa AbstractVector ? "[" * join(v, " ") * "]" : v)" for (k, v) in sort!(collect(r.meta["params"]))],
+                        ["$k: $(split(v, '|')[end])" for (k, v) in sort!(collect(r.meta["inputs"]))]), "; ")
+    println(io, "# ", q(r.meta["label"]), " (", r.meta["created"], isempty(r.meta["owner"]) ? "" : ", " * r.meta["owner"], ")",
+            isempty(changes) ? "" : ": " * changes)
+    println(io, join(["name", "unit", (num(t) for t in r.meta["time"])...], ","))
+    for (j, n) in enumerate(r.columns)
+        k = findfirst('[', n)
+        row = get(ex.row, Symbol(k === nothing ? n : n[1:k-1]), nothing)
+        unit = row === nothing ? "" : ex.vars.unit[row]
+        print(io, q(n), ",", q(unit === nothing ? "" : unit))
+        for i in axes(r.data, 1)
+            print(io, ",", num(r.data[i, j]))
+        end
+        println(io)
+    end
+    return String(take!(io))
+end
+
 # a name's values in some runs: its elements' labels, a vector per element per run
 function series(ex::Explorer, user, name, ids)
     runs = Dict{String,Any}()
