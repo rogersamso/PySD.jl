@@ -8,6 +8,7 @@ EquationSet
 Model
 StatefulOperator
 check_units
+variables
 ```
 
 ## Inputs: Excel, lookups, other models

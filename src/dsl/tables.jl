@@ -61,14 +61,28 @@ function Tables.columns(r::Results)
             continue
         end
         labels = [string.(DimensionalData.lookup(d)) for d in v.dims]
-        sz = map(length, v.dims)
-        for J in CartesianIndices(reverse(sz))
+        for J in CartesianIndices(reverse(map(length, v.dims)))
             I = reverse(Tuple(J))
             push!(names, Symbol(name, "[", join((labels[k][I[k]] for k in eachindex(I)), ","), "]"))
-            push!(columns, constant ? fill(parent(x)[I...], n) : [parent(y)[I...] for y in x])
         end
+        constant ? _element_columns!(columns, parent(x), n) :
+                   _element_columns!(columns, [parent(y) for y in x], map(length, v.dims))
     end
     return ResultsColumns(names, columns, Dict(nm => i for (i, nm) in enumerate(names)))
+end
+
+# a column per element, the first dimension slowest (behind a function
+# barrier: the arrays' type is known here, so the loops are compiled for it)
+function _element_columns!(columns, A::AbstractArray, n::Int)
+    for J in CartesianIndices(reverse(size(A)))
+        push!(columns, fill(A[CartesianIndex(reverse(Tuple(J)))], n))
+    end
+end
+function _element_columns!(columns, As::AbstractVector, sz::Tuple)
+    for J in CartesianIndices(reverse(sz))
+        I = CartesianIndex(reverse(Tuple(J)))
+        push!(columns, [A[I] for A in As])
+    end
 end
 
 Tables.columnnames(c::ResultsColumns) = getfield(c, :names)
