@@ -8,7 +8,6 @@ services:
     restart: unless-stopped
     environment:
       PYSD_USERS: password
-      PYSD_ADMINS: ${ADMINS}
       PYSD_TITLE: ${TITLE:-}
       PYSD_MODEL: ${MODEL:-}
       PYSD_INPUT_DIRS: ${INPUT_DIRS:-}

@@ -19,7 +19,15 @@ A web page to explore a PySD.jl model in the browser:
   one HTML file with the plots and runs that opens anywhere without a server.
 - **Saved views**: the plots, runs and settings on screen, by name.
 
-## Start it
+## Three ways to run it
+
+| | who uses it | how | see |
+|---|---|---|---|
+| **On your computer** | you | `serve(model)` in Julia | below |
+| **For several people, on a machine you run** | colleagues on your network or VPN | `serve(model; users = :password)` | [Several users](#several-users) |
+| **On a server, with Docker** | colleagues anywhere, over HTTPS | Docker Compose with Caddy | [`deploy/README.md`](deploy/README.md) |
+
+## On your computer
 
 ```julia
 using Pkg
@@ -28,41 +36,74 @@ using PySDExplorer
 serve("path/to/model.jl"; dir = "explorer-data")
 ```
 
-and open http://127.0.0.1:8080.  The model is built once when the explorer
-starts (minutes for a large model); every run after that takes about as long
-as `run_model`.  Start Julia with threads (`julia -t 4`) so the page answers
-while a run goes on.
+and open http://127.0.0.1:8080.  No login: you can do everything, the Admin
+tab included.  The model is built once when the explorer starts (minutes for
+a large model); every run after that takes about as long as `run_model`.
+Start Julia with threads (`julia -t 4`) so the page answers while a run goes
+on.
 
 Options of `serve`:
 
 | option | what it does |
 |---|---|
-| `dir` | where runs and saved views are kept (a `.json` and a `.f64` file per run) |
+| `dir` | where runs, analyses, saved views, settings and users are kept |
 | `host`, `port` | where it listens; `127.0.0.1` (the default) is this computer only |
 | `title` | the page's title (default: the model file's name) |
-| `input_dirs` | folders of `.xlsx` files: their sheets can replace the model's input sheets in a run |
-| `sensitivity` | a TSV file: a `parameter` column, optionally `value`, and a column per result |
+| `input_dirs` | folders of `.xlsx` files: their sheets can replace the model's input sheets in a run (files named like the model's own) |
+| `sensitivity` | a TSV file of elasticities: a `parameter` column, optionally `value`, and a column per result |
 | `separator` | splits set titles into a tree: `"ENERGY-DEMAND-Heat"` → ENERGY › DEMAND › Heat (`""`: none) |
-| `users` | `:local` (the default): one person, this computer's, allowed everything. `:header`: several people, behind a proxy that checks their passwords (see below) |
-| `admins` | with `users = :header`, the names that see the Admin tab |
-| `user_header` | the header the proxy writes the user's name in (`X-PySD-User`) |
+| `users` | `:local` (the default): one person, no login. `:password`: several people, with the explorer's own logins. `:header`: several people, logged in by a proxy in front (see below) |
+| `secure_cookies` | with `users = :password`: `true` (the default) sends the login cookie over HTTPS only |
 
 ## Several users
 
-With `users = :header`, a reverse proxy in front of the explorer (Caddy,
-nginx) asks each person for their name and password and passes the name on
-in `X-PySD-User`.  Then:
+With `users = :password` the explorer asks for a user name and password, and:
 
 - each user sees the base run, their own runs and analyses, and those others
   shared (a **Share** button); only the author, or an administrator, can
   rename, share or delete them; saved views are each user's own;
 - runs and analyses wait in a queue for one of the simulation slots;
-- administrators set, in the **Admin** tab: simulations at once, jobs per user,
+- administrators, in the **Admin** tab: add users (the explorer makes a
+  password and shows it once), give someone a new password, make
+  administrators, remove users; set the simulations at once, jobs per user,
   runs and analyses kept per user, parameters per analysis, whether users see
-  the code; and see everyone's jobs and disk use.
+  the code; see everyone's jobs and disk use;
+- everyone changes their own password from the menu with their name.
 
-`deploy/` has all it takes to put it on a server with Docker: the image,
-Caddy with HTTPS and a password per user, and the steps (`deploy/README.md`).
+The first administrator is made from the command line (it asks for the
+password; it never goes on the command line):
+
+```sh
+julia --project=path/to/PySD.jl/explorer path/to/PySD.jl/explorer/deploy/users.jl explorer-data set roger --admin
+```
+
+then:
+
+```julia
+serve("path/to/model.jl"; dir = "explorer-data", users = :password, host = "0.0.0.0")
+```
+
+**Passwords need HTTPS.**  Over plain `http://` they cross the network as
+they are typed, and the explorer's cookie (`secure_cookies = true`) only
+travels over HTTPS.  So:
+
+- on a server open to the internet, put a web server with HTTPS in front
+  (Caddy does it in a few lines, and gets its certificate itself): the
+  Docker setup in [`deploy/`](deploy/README.md) does exactly that;
+- on a network you trust (a VPN such as Tailscale, which encrypts its
+  traffic), `secure_cookies = false` lets it work over `http://`.
+
+The users live in `dir/users.json` (passwords as salted PBKDF2-SHA256
+hashes, 600,000 rounds) and their sessions in `dir/sessions.json` (only the
+tokens' hashes).  Five failed logins for a name, or twenty from an address,
+in 15 minutes block more for 15 minutes; sessions end after 14 days without
+use, 30 days in all, or when the password changes.
+
+`users = :header` is for an organisation that already logs people in at its
+web server (single sign-on): that proxy checks who they are and passes the
+name in `X-PySD-User` (`user_header`); `admins` lists the administrators.
+The explorer then trusts that header, so it listens on `127.0.0.1` only,
+where nothing but the proxy can reach it.
 
 ## What it shows
 
@@ -73,12 +114,11 @@ them (Vensim's names, units, comments, limits and views).
 
 ## Safety
 
-Anyone who can open the page can run the model on your computer.  Keep the
-default `host = "127.0.0.1"`, or serve it to others only behind a proxy that
-checks passwords (`users = :header`; then the explorer only listens on
-`127.0.0.1`, as it trusts the name the proxy sends), or on a VPN such as
-Tailscale.  The server only accepts the model's own parameters and the listed
-input sheets; the model itself is code, so serve only models you trust.
+Anyone who can log in (or, with `users = :local`, open the page) can run the
+model on the computer it's served from, within the Admin tab's limits.  The
+server only accepts the model's own parameters and the listed input sheets;
+users can't upload models.  A translated model is Julia code: serve only
+models you trust.
 
 ## Runs on disk
 

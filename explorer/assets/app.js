@@ -675,8 +675,11 @@ function renderInputs() {
   const box = $("#inputs-box");
   const entries = Object.entries(S.model.inputs).filter(([, cs]) => cs.length > 1);
   if (!entries.length) {
-    box.replaceChildren(el("p", { class: "note" }, `Input sheets: the model's own (${Object.keys(S.model.inputs).length}). ` +
-      "To choose other sheets, start the explorer with input_dirs = folders of .xlsx files."));
+    const own = Object.keys(S.model.inputs).length;
+    box.replaceChildren(el("p", { class: "note" }, `Input sheets: the model reads ${own} Excel sheets, and there are no other versions of them yet. ` +
+      "Another version of a sheet (a different scenario, say) is a copy of its file with other values, named like it " +
+      "(scen_w_high.xlsx for scen_w.xlsx) and put in the explorer's input folder; it then appears here to choose from. " +
+      "Single values from the sheets can also be changed one by one below."));
     return;
   }
   box.replaceChildren(el("h3", {}, "Input sheets"), ...entries.map(([k, cs]) => el("label", { class: "block" }, show(k),

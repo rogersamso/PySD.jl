@@ -58,6 +58,7 @@ run_model(m; params = (; k = 0.2))      # again, with another rate: nothing comp
 - [Solvers and the model's ticks](https://rogersamso.github.io/PySD.jl/stable/solvers/): Euler as Vensim, or any SciML solver
 - [Sensitivity and derivatives](https://rogersamso.github.io/PySD.jl/stable/sensitivity/): sweeps on several threads, ForwardDiff, Measurements
 - [Models as packages](https://rogersamso.github.io/PySD.jl/stable/packages/): load a large model in seconds
+- [Exploring a model in the browser](https://rogersamso.github.io/PySD.jl/stable/explorer/): plots, runs and sensitivity in a web page, on your computer or on a server for several people (`explorer/`)
 - [Vensim functions](https://rogersamso.github.io/PySD.jl/stable/functions/), and the [reference](https://rogersamso.github.io/PySD.jl/stable/api/)
 - [News](NEWS.md)
 
