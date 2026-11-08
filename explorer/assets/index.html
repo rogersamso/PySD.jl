@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PySD Explorer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Cpath d=%22M1 13 L5 7 L9 10 L15 2%22 fill=%22none%22 stroke=%22%232a78d6%22 stroke-width=%222%22/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <h1 id="title">PySD Explorer</h1>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="explore" class="active">Explore</button>
+    <button role="tab" data-tab="runs">Runs</button>
+    <button role="tab" data-tab="sensitivity" id="tab-sens" hidden>Sensitivity</button>
+    <button role="tab" data-tab="code" id="tab-code" hidden>Code</button>
+  </nav>
+  <span id="status" class="status"></span>
+  <button id="theme" class="ghost" title="Light or dark">Theme</button>
+</header>
+
+<div class="layout">
+  <aside id="sidebar">
+    <input id="search" type="search" placeholder="Search names, descriptions…" autocomplete="off">
+    <div class="kinds">
+      <label><input type="checkbox" data-kind="stock" checked> stocks</label>
+      <label><input type="checkbox" data-kind="aux" checked> variables</label>
+      <label><input type="checkbox" data-kind="parameter" checked> parameters</label>
+      <label><input type="checkbox" data-kind="constant"> constants</label>
+    </div>
+    <div id="tree" class="tree"></div>
+  </aside>
+
+  <main>
+    <section id="explore" class="tab active">
+      <div class="toolbar">
+        <div id="run-chips" class="chips"></div>
+        <div class="row">
+          <label>Show
+            <select id="mode">
+              <option value="values">values</option>
+              <option value="diff">difference from</option>
+              <option value="pct">% difference from</option>
+            </select>
+          </label>
+          <select id="baseline"></select>
+          <label>Columns <select id="columns"><option>1</option><option selected>2</option><option>3</option></select></label>
+          <span class="sep"></span>
+          <select id="views"><option value="">Saved views…</option></select>
+          <button id="view-save">Save view</button>
+          <button id="view-delete" class="ghost" title="Delete this saved view">✕</button>
+          <span class="sep"></span>
+          <label>Export
+            <select id="export-size">
+              <option value="screen">as on screen</option>
+              <option value="slide">slide 16:9</option>
+              <option value="a4">A4 portrait</option>
+              <option value="a4l">A4 landscape</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="export-caption" checked> caption</label>
+          <button id="export-png">PNG</button>
+          <button id="export-svg">SVG</button>
+          <button id="export-csv">CSV</button>
+          <button id="export-html" title="One HTML file with these runs and plots, opens without a server">HTML</button>
+          <button id="clear" class="ghost">Clear</button>
+        </div>
+      </div>
+      <div id="empty" class="empty">Pick names on the left to plot them. Plots compare the runs selected above.</div>
+      <div id="panels" class="panels cols-2"></div>
+    </section>
+
+    <section id="runs" class="tab">
+      <div class="runs-grid">
+        <div class="card" id="new-run">
+          <h2>New run</h2>
+          <label class="block">Name <input id="run-label" type="text" placeholder="e.g. High climate sensitivity"></label>
+          <div id="inputs-box"></div>
+          <h3>Parameters <small id="changed-count"></small></h3>
+          <div id="changed" class="changed"></div>
+          <input id="param-search" type="search" placeholder="Find a parameter…" autocomplete="off">
+          <div id="param-list" class="param-list"></div>
+          <div class="row end">
+            <button id="reset-all" class="ghost">Reset all</button>
+            <button id="run" class="primary">Run</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Runs</h2>
+          <table id="runs-table" class="table"><thead><tr><th></th><th>Name</th><th>Made</th><th>Changes</th><th></th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section id="code" class="tab">
+      <div class="code-grid">
+        <div class="card code-files">
+          <input id="code-search" type="search" placeholder="Find a file or set…" autocomplete="off">
+          <div id="code-list"></div>
+        </div>
+        <div class="card code-view">
+          <div class="code-head"><b id="code-file"></b> <small id="code-sets"></small>
+            <span id="code-where" class="code-where"></span></div>
+          <p class="note">Names in the code are links: click one to plot it.</p>
+          <div id="code-text" class="code-text"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="sensitivity" class="tab">
+      <div class="row" style="margin-bottom:8px">
+        <label>Result <select id="sens-output"></select></label>
+        <label>Show <select id="sens-top"><option>15</option><option selected>25</option><option>50</option></select> parameters</label>
+        <label class="check"><input type="checkbox" id="sens-years"> include year parameters</label>
+        <button id="sens-png">PNG</button>
+        <button id="sens-svg">SVG</button>
+      </div>
+      <p class="note" id="sens-note"></p>
+      <div id="sens-chart" class="sens-chart"></div>
+    </section>
+  </main>
+</div>
+<div id="toast" class="toast" hidden></div>
+<script src="vendor/plotly.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
