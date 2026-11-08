@@ -77,7 +77,10 @@ model's code, and everyone's jobs.  Everyone can change their own password
   tab sets how many and how large).  For everyone at once, put `.xlsx` files
   named like the model's own (`scen_w_high.xlsx` for `scen_w.xlsx`) in a
   folder listed in `INPUT_DIRS`; the Runs tab finds them, no restart needed.
-- **Update** PySD.jl and the explorer: `git pull`, then `docker compose up -d --build`.
+- **Update** PySD.jl and the explorer: `git pull`, then
+  `docker compose up -d --build --force-recreate`.  (`--force-recreate`
+  matters: Caddy's container mounts the file `Caddyfile`, and after
+  `git pull` replaces that file a running container still sees the old one.)
 - **Back up**: the `explorer-data` volume (`docker run --rm -v deploy_explorer-data:/d -v $PWD:/b alpine tar czf /b/explorer-data.tgz -C /d .`).
 
 ## What people can do, and the limits
