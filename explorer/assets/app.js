@@ -142,7 +142,7 @@ function wire() {
   $("#export-svg").addEventListener("click", () => exportView("svg"));
   $("#export-csv").addEventListener("click", exportCSV);
   $("#export-html").addEventListener("click", exportHTML);
-  $("#param-search").addEventListener("input", debounce(renderParams, 150));
+  $("#param-search").addEventListener("input", debounce(() => { S.paramsAll = false; renderParams(); }, 150));
   $("#reset-all").addEventListener("click", () => { S.edits.clear(); S.inputs = {}; renderInputs(); renderParams(); renderChanged(); });
   $("#run").addEventListener("click", newRun);
   $("#sens-output").addEventListener("change", renderSens);
@@ -707,11 +707,13 @@ function renderParams() {
     return q.every((w) => hay.includes(w.replace(/_/g, " ")));
   });
   const box = $("#param-list");
-  const more = list.length > 40;
-  list = list.slice(0, 40);
-  box.replaceChildren(...list.map(paramRow),
-    el("p", { class: "note" }, more ? `${all.length} parameters: showing the first 40 that match; type more to narrow.` :
-      (list.length ? "" : "No parameter matches.")));
+  const n = list.length, more = n > 40 && !S.paramsAll;
+  if (more) list = list.slice(0, 40);
+  const what = q.length ? `${n} of ${all.length} parameters match` : `${all.length} parameters`;
+  const note = more ? el("p", { class: "note" }, `${what}: showing the first 40. Type more to narrow (a module's name works), or `,
+      el("button", { type: "button", class: "link", onclick: () => { S.paramsAll = true; renderParams(); } }, `show all ${n}`), ".")
+    : el("p", { class: "note" }, n ? (n > 40 ? `${what}, all shown.` : "") : "No parameter matches.");
+  box.replaceChildren(...list.map(paramRow), note);
 }
 
 function paramRow(v) {

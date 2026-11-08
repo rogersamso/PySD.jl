@@ -42,6 +42,7 @@ button:hover { border-color: var(--text-muted); }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 button.ghost { background: transparent; border-color: transparent; }
 button:disabled { opacity: .5; cursor: default; }
+button.link { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font-size: inherit; }
 select, input[type=text], input[type=search], input[type=number] {
   background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
 small { color: var(--text-muted); }
