@@ -14,13 +14,13 @@ started together with Docker Compose.
 
 The explorer itself isn't reachable from outside: only Caddy talks to it.
 
-| container | image | |
-|---|---|---|
+| container | image | notes |
+|:---|:---|:---|
 | explorer | built here from `Dockerfile` (`julia:1.12` + PySD.jl, the explorer, DimensionalData, Unitful, precompiled; about 2.4 GB) | runs as the user `explorer`, not root |
 | caddy | `caddy:2.10`, as published | ports 80 and 443 |
 
 | where | what |
-|---|---|
+|:---|:---|
 | this repository | the code, and `.env` (the settings); copied into the image when built, so an update needs `--build` |
 | `MODEL_DIR` | the model and its Excel files, mounted read-only at `/model` |
 | volume `deploy_explorer-data` (`/data`) | users, sessions, limits, runs, analyses, uploads, saved views (see the manual's "The data folder") |

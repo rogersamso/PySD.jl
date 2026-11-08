@@ -8,7 +8,7 @@ figures, data or a whole page to export.  It runs on your computer, or on a
 server for several people.
 
 | | who uses it | how |
-|---|---|---|
+|:---|:---|:---|
 | [On your computer](@ref) | you | `serve(model)` |
 | [For several people](@ref) | colleagues on your network or VPN | `serve(model; users = :password)` |
 | [On a server, with Docker](@ref) | colleagues anywhere, over HTTPS | Docker Compose, with Caddy in front |
@@ -48,6 +48,14 @@ explorer doesn't choose a parent run yet.  Give the model a file of the
 parent's results in its `inputs.jl`, `parents = (series_file("world.tab"),)`;
 every run then uses that one parent run.
 
+On the page: pick names from the tree of sets (or search them); each plot
+compares the runs shown, in values or as the difference from one of them.
+An array's plot has a row of checkboxes per dimension (all, none, or add
+them up: *Σ add up* on the sectors gives one line per fuel), so any slice of
+it is a couple of clicks.  Figures export as PNG or SVG, what is on screen
+as CSV, the whole page as one HTML file, and each run's complete results as
+CSV from the **Runs** tab (a row per name or element, a column per time).
+
 Other options: `input_dirs` (folders whose `.xlsx` sheets, named like the
 model's own files, can replace its input sheets in a run; users can also
 upload their own versions of those files from the page), `sensitivity` (a
@@ -80,7 +88,7 @@ changed; the others keep their default, from `DEFAULT_SETTINGS` in
 `explorer/src/users.jl`).
 
 | Admin tab | default | from–to |
-|---|---|---|
+|:---|---:|---:|
 | Simulations at once (everyone's) | 2 | 1–64 |
 | A user's runs and analyses waiting or running | 1 | 1–100 |
 | Runs kept per user | 30 | 1–10,000 |
@@ -98,8 +106,8 @@ There is no quota of disk space as such: a run of a large model takes about
 Everything the explorer writes is in `dir` (in Docker, the `explorer-data`
 volume, mounted at `/data`):
 
-| | |
-|---|---|
+| file | what it holds |
+|:---|:---|
 | `users.json` | users, administrators, password hashes |
 | `sessions.json` | logins (hashes of their tokens) |
 | `settings.json` | the Admin tab's limits, once changed |
