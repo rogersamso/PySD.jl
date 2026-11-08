@@ -21,7 +21,7 @@ RUN julia -e 'using Pkg; \
         Pkg.add(["DimensionalData", "Unitful"]); \
         Pkg.precompile()'
 
-COPY --chown=explorer explorer/deploy/serve.jl /app/serve.jl
+COPY --chown=explorer explorer/deploy/serve.jl explorer/deploy/users.jl /app/
 
 VOLUME ["/data"]
 EXPOSE 8080

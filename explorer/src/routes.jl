@@ -24,9 +24,15 @@ _param(req, k) = HTTP.unescapeuri(HTTP.getparams(req)[k])
 function routes(ex::Explorer)
     r = HTTP.Router(_asset)
     # each handler gets the request and the user; errors become answers
-    on(method, path, f) = HTTP.register!(r, method, path, req -> try
-        f(req, user_of(ex, req))
+    # with the explorer's own logins, a request that changes something carries
+    # X-PySD-Request (the page adds it; another site's page can't)
+    checked(req) = ex.auth.mode === :password && req.method != "GET" && isempty(HTTP.header(req, "X-PySD-Request", "")) &&
+                   throw(Forbidden("a request without X-PySD-Request"))
+    on(method, path, f; anyone = false) = HTTP.register!(r, method, path, req -> try
+        checked(req)
+        f(req, anyone ? "" : user_of(ex, req))
     catch e
+        e isa NotLoggedIn && return _json_response(Dict("error" => "log in", "login" => true); status = 401)
         e isa Forbidden && return _error(e.msg; status = 403)
         e isa KeyError && return _error("not found: $(e.key)"; status = 404)
         e isa ArgumentError && return _error(e.msg)
@@ -38,6 +44,28 @@ function routes(ex::Explorer)
     admin(user) = is_admin(ex, user) || throw(Forbidden("for administrators"))
 
     on("GET", "/api/me", (_, u) -> _json_response(me_info(ex, u)))
+
+    # logins (users = :password)
+    pw(u) = ex.auth.mode === :password || throw(ArgumentError("this explorer has no logins of its own"))
+    on("POST", "/api/login", (req, _) -> begin
+        pw("")
+        b = _body(req)
+        token = login!(ex, String(get(b, :user, "")), String(get(b, :password, "")), _address(req))
+        HTTP.Response(200, ["Content-Type" => "application/json", "Set-Cookie" => _session_cookie(ex, token)],
+                      JSON3.write(Dict("ok" => true)))
+    end; anyone = true)
+    on("POST", "/api/logout", (req, _) -> begin
+        pw("")
+        logout!(ex, req)
+        HTTP.Response(200, ["Content-Type" => "application/json", "Set-Cookie" => _session_cookie(ex, ""; maxage = 0)],
+                      JSON3.write(Dict("ok" => true)))
+    end; anyone = true)
+    on("POST", "/api/password", (req, u) -> begin
+        pw(u)
+        b = _body(req)
+        change_password!(ex, u, String(get(b, :current, "")), String(get(b, :new, "")))
+        _json_response(Dict("ok" => true))       # the user's sessions ended: log in again
+    end)
     on("GET", "/api/model", (_, u) -> cached("model", () -> model_info(ex)))
     on("GET", "/api/inputs", (_, u) -> (refresh_inputs!(ex); _json_response(inputs_info(ex))))
 
@@ -97,5 +125,27 @@ function routes(ex::Explorer)
 
     on("GET", "/api/admin", (_, u) -> (admin(u); _json_response(admin_info(ex))))
     on("PUT", "/api/admin/settings", (req, u) -> (admin(u); _json_response(update_settings!(ex, _body(req)))))
+    on("GET", "/api/admin/users", (_, u) -> (admin(u); pw(u); _json_response(users_info(ex))))
+    on("POST", "/api/admin/users", (req, u) -> begin
+        admin(u); pw(u)
+        b = _body(req)
+        name = strip(String(get(b, :name, "")))
+        _json_response(Dict("user" => name, "password" => create_user!(ex, name; admin = get(b, :admin, false) === true)))
+    end)
+    on("POST", "/api/admin/users/{name}/password", (req, u) -> (admin(u); pw(u);
+        _json_response(Dict("password" => reset_password!(ex, _param(req, "name"))))))
+    on("PATCH", "/api/admin/users/{name}", (req, u) -> begin
+        admin(u); pw(u)
+        a = get(_body(req), :admin, nothing)
+        a isa Bool || throw(ArgumentError("admin is true or false"))
+        set_admin!(ex, _param(req, "name"), a)
+        _json_response(users_info(ex))
+    end)
+    on("DELETE", "/api/admin/users/{name}", (req, u) -> begin
+        admin(u); pw(u)
+        _param(req, "name") == u && throw(ArgumentError("you can't remove yourself"))
+        remove_user!(ex, _param(req, "name"))
+        _json_response(users_info(ex))
+    end)
     return r
 end

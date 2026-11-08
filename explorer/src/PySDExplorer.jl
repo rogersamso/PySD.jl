@@ -20,6 +20,8 @@ import PySD.Tables as Tables
 import PySD.XLSX as XLSX
 using DimensionalData
 using HTTP, JSON3, Dates, Sockets, Random
+import SHA
+using Base64: base64encode, base64decode
 
 export serve, static_page
 
@@ -53,7 +55,7 @@ mutable struct Job
 end
 
 struct Auth
-    mode::Symbol                         # :local (one user, an administrator) or :header
+    mode::Symbol                         # :local (one user, an administrator), :header (a proxy's) or :password (the explorer's)
     header::String                       # the header the proxy writes the user's name in
     admins::Set{String}
 end
@@ -80,10 +82,16 @@ mutable struct Explorer
     running::Int
     lock::ReentrantLock                  # runs, analyses, inputs
     cache::Dict{String,String}           # answers that don't change (the model, its code), as JSON
+    users::Dict{String,Dict{String,Any}} # users = :password: name => hash, admin…
+    sessions::Dict{String,Dict{String,Any}}
+    failures::Dict{String,Vector{DateTime}}
+    auth_mtime::Dict{String,Float64}
+    secure_cookies::Bool
 end
 
 include("model.jl")
 include("users.jl")
+include("auth.jl")
 include("runs.jl")
 include("jobs.jl")
 include("sensitivity.jl")
@@ -107,7 +115,13 @@ builds one) at `http://host:port`.
 - `separator`: splits set titles into a tree (`"ENERGY-DEMAND-Heat"` →
   ENERGY › DEMAND › Heat; `""` for none).
 - `users = :local`: one person, this computer's, with everything allowed.
-  `users = :header`: several people; a reverse proxy in front (Caddy, nginx)
+- `users = :password`: several people, who log in with the explorer's own
+  users (`dir/users.json`); administrators create them, reset passwords and
+  remove them in the Admin tab.  The first administrator is made with
+  `deploy/users.jl` (or `PySDExplorer.set_password!(dir, name, pw; admin = true)`).
+  Serve it over HTTPS (a proxy such as Caddy in front); `secure_cookies = false`
+  only to try it out without.
+- `users = :header`: several people; a reverse proxy in front (Caddy, nginx)
   checks their passwords and writes the user's name in `user_header`.  The
   explorer then listens on `127.0.0.1` only (the proxy's side), and `admins`
   are the names that see the administrators' tab.
@@ -125,8 +139,12 @@ function serve(model; dir = "explorer-data", host = "127.0.0.1", port::Integer =
 end
 
 function explorer(model; dir = "explorer-data", title = "", input_dirs = String[], sensitivity = nothing,
-                  separator = "-", users::Symbol = :local, admins = String[], user_header = "X-PySD-User")
-    users in (:local, :header) || throw(ArgumentError("users is :local or :header, not $(repr(users))"))
+                  separator = "-", users::Symbol = :local, admins = String[], user_header = "X-PySD-User",
+                  secure_cookies::Bool = true)
+    users in (:local, :header, :password) || throw(ArgumentError("users is :local, :password or :header, not $(repr(users))"))
+    users === :password && !any(u -> u["admin"] === true, values(load_users(dir))) &&
+        throw(ArgumentError("no administrator in $(abspath(dir))/users.json: make one first, e.g. " *
+                            "julia deploy/users.jl $(abspath(dir)) set NAME --admin (it asks for the password)"))
     m = model isa Model ? model : _build(model)
     title = isempty(title) && !(model isa Model) ? splitext(basename(model))[1] : title
     for d in ("runs", "views", "analyses")
@@ -140,7 +158,10 @@ function explorer(model; dir = "explorer-data", title = "", input_dirs = String[
     ex = Explorer(m, title, vars, row, editable, sizes, _input_choices(m, input_dirs), String.(input_dirs), String(dir),
                   separator, code, sources, Dict{String,Run}(), Dict{String,Dict{String,Any}}(),
                   Auth(users, user_header, Set(String.(admins))), _load_settings(dir), Job[],
-                  Threads.Condition(), 0, ReentrantLock(), Dict{String,String}())
+                  Threads.Condition(), 0, ReentrantLock(), Dict{String,String}(),
+                  Dict{String,Dict{String,Any}}(), Dict{String,Dict{String,Any}}(), Dict{String,Vector{DateTime}}(),
+                  Dict{String,Float64}(), secure_cookies)
+    users === :password && lock(() -> _refresh_auth!(ex), ex.lock)
     _load_runs!(ex)
     _load_analyses!(ex)
     sensitivity === nothing || (ex.analyses["file"] = _sensitivity_file(sensitivity, row))

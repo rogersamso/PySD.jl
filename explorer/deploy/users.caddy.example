@@ -1,5 +1,0 @@
-# One line per user: the name, and the password's hash from
-#   docker compose run --rm caddy caddy hash-password
-# Copy this file to users.caddy, add the users, then: docker compose restart caddy
-roger $2a$14$REPLACE_WITH_THE_HASH
-ana $2a$14$REPLACE_WITH_THE_HASH

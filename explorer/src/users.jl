@@ -58,13 +58,15 @@ end
 # the user asking: a name made of letters, digits, `.`, `_`, `-`, `@`
 function user_of(ex::Explorer, req)
     ex.auth.mode === :local && return "local"
+    ex.auth.mode === :password && return _session_user(ex, req)
     u = strip(HTTP.header(req, ex.auth.header, ""))
     isempty(u) && throw(Forbidden("no user: the explorer is served for logged-in users only"))
     occursin(r"^[\w.@-]{1,64}$", u) || throw(Forbidden("not a user name the explorer accepts"))
     return String(u)
 end
 
-is_admin(ex::Explorer, user) = ex.auth.mode === :local || user in ex.auth.admins
+is_admin(ex::Explorer, user) = ex.auth.mode === :local ||
+    (ex.auth.mode === :password ? get(get(ex.users, user, Dict()), "admin", false) === true : user in ex.auth.admins)
 
 # runs and analyses: the owner's, shared ones, and those of no one (the base run, the analysis from a file)
 visible(ex::Explorer, user, meta) =
@@ -76,7 +78,7 @@ may_see_code(ex::Explorer, user) = is_admin(ex, user) || ex.settings["show_code"
 function me_info(ex::Explorer, user)
     s = ex.settings
     return Dict("user" => user, "admin" => is_admin(ex, user), "code" => !isempty(ex.code) && may_see_code(ex, user),
-                "local" => ex.auth.mode === :local,
+                "local" => ex.auth.mode === :local, "auth" => String(ex.auth.mode),
                 "limits" => Dict(k => s[k] for k in ("max_runs_per_user", "max_analyses_per_user",
                                                      "max_params_per_analysis", "max_jobs_per_user")),
                 "runs" => count(r -> r.meta["owner"] == user, values(ex.runs)),

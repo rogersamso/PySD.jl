@@ -24,11 +24,11 @@ const S = {
 // ---------------------------------------------------------------- data access
 async function api(method, path, body) {
   if (STATIC) return staticApi(method, path);
-  const r = await fetch("api/" + path, {
-    method, headers: body ? { "Content-Type": "application/json" } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const headers = { "X-PySD-Request": "1" };          // (the server refuses changes without it)
+  if (body) headers["Content-Type"] = "application/json";
+  const r = await fetch("api/" + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && j.login) { showLogin(); throw new Error("Log in first."); }
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
@@ -92,15 +92,19 @@ const fileName = (s) => s.replace(/[^\w\-]+/g, "_").replace(/^_|_$/g, "").slice(
 // ---------------------------------------------------------------- start
 async function start() {
   if (STATIC) document.body.classList.add("static");
+  try { S.me = await api("GET", "me"); } catch (e) { if (!$("#login").hidden) return; throw e; }
   S.model = await api("GET", "model");
   for (const v of S.model.names) S.byName.set(v.name, v);
   document.title = (S.model.title || "Model") + " · PySD Explorer";
   $("#title").textContent = S.model.title || "PySD Explorer";
-  S.me = await api("GET", "me");
   S.runs = await api("GET", "runs");
   S.views = await api("GET", "views");
   S.analyses = await api("GET", "analyses");
-  $("#who").textContent = S.me.local || STATIC ? "" : S.me.user + (S.me.admin ? " (admin)" : "");
+  $("#who").textContent = S.me.local || STATIC || S.me.auth === "password" ? "" : S.me.user + (S.me.admin ? " (admin)" : "");
+  if (S.me.auth === "password" && !STATIC) {
+    $("#account").hidden = false;
+    $("#account").textContent = S.me.user + (S.me.admin ? " (admin)" : "") + " ▾";
+  }
   $("#tab-admin").hidden = !S.me.admin || !!STATIC;
   $("#tab-sens").hidden = !!STATIC && !S.analyses.length;
   if (S.analyses.length) S.sens = await api("GET", "analyses/" + encodeURIComponent(S.analyses[0].id));
@@ -151,6 +155,14 @@ function wire() {
   $("#an-par-none").addEventListener("click", () => { S.anParams.clear(); renderAnalysisParams(); });
   $("#an-start").addEventListener("click", startAnalysis);
   $("#admin-save").addEventListener("click", saveSettings);
+  $("#account").addEventListener("click", (e) => { e.stopPropagation(); $("#account-menu").hidden = !$("#account-menu").hidden; });
+  document.addEventListener("click", () => ($("#account-menu").hidden = true));
+  $("#menu-logout").addEventListener("click", async () => { try { await api("POST", "logout"); } catch (e) {} location.reload(); });
+  $("#menu-password").addEventListener("click", () => { $("#pw-error").hidden = true; $("#password-form").reset(); $("#dlg-password").showModal(); });
+  $("#password-form").addEventListener("submit", changePassword);
+  $("#new-user").addEventListener("submit", addUser);
+  $("#secret-copy").addEventListener("click", () => navigator.clipboard.writeText($("#secret-value").textContent).then(() => toast("Copied.")));
+  $("#secret-close").addEventListener("click", () => { $("#secret-value").textContent = ""; $("#dlg-secret").close(); });
   $("#sens-top").addEventListener("change", renderSens);
   $("#sens-years").addEventListener("change", renderSens);
   $("#sens-png").addEventListener("click", () => Plotly.downloadImage("sens-chart", { format: "png", scale: 2, filename: "sensitivity" }));
@@ -183,7 +195,7 @@ function tab(name) {
   document.querySelectorAll("section.tab").forEach((s) => s.classList.toggle("active", s.id === name));
   if (name === "sensitivity") { renderSens(); renderAnalysisForm(); }
   clearInterval(S.adminTimer);
-  if (name === "admin") { renderAdmin(); S.adminTimer = setInterval(renderAdmin, 3000); }
+  if (name === "admin") { renderAdmin(); renderLogins(); S.adminTimer = setInterval(renderAdmin, 3000); }
   if (name === "runs" && !STATIC) api("GET", "inputs").then((i) => { S.model.inputs = i; renderInputs(); }).catch(() => {});
   if (name === "explore") document.querySelectorAll(".plot").forEach((p) => Plotly.Plots.resize(p));
 }
@@ -563,7 +575,7 @@ async function exportHTML() {
   if (!S.panels.length) return toast("Pick the names to include first: the copy keeps the plotted names only.");
   status("Making the HTML copy…");
   try {
-    const r = await fetch("api/static", { method: "POST", headers: { "Content-Type": "application/json" },
+    const r = await fetch("api/static", { method: "POST", headers: { "Content-Type": "application/json", "X-PySD-Request": "1" },
       body: JSON.stringify({ runs: S.runs.map((r) => r.id), names: S.panels.map((p) => p.name), view: currentView("Exported view") }) });
     if (!r.ok) throw new Error((await r.json()).error);
     download(fileName(S.model.title || "model") + "-explorer.html", await r.blob());
@@ -1087,6 +1099,80 @@ async function saveSettings() {
     toast("Saved.");
     renderAdmin();
   } catch (e) { toast(e.message, 6000); }
+}
+
+// ---------------------------------------------------------------- logging in (users = :password)
+function showLogin() {
+  const box = $("#login");
+  if (!box.hidden) return;
+  box.hidden = false;
+  $("#login-title").textContent = document.title.replace(" · PySD Explorer", "") || "PySD Explorer";
+  $("#login-user").focus();
+  $("#login-form").onsubmit = async (e) => {
+    e.preventDefault();
+    $("#login-go").disabled = true;
+    $("#login-error").hidden = true;
+    try {
+      await api("POST", "login", { user: $("#login-user").value.trim(), password: $("#login-password").value });
+      location.reload();
+    } catch (err) {
+      $("#login-error").textContent = err.message; $("#login-error").hidden = false;
+      $("#login-password").value = "";
+    }
+    $("#login-go").disabled = false;
+  };
+}
+async function changePassword(e) {
+  if (e.submitter && e.submitter.value === "cancel") return;
+  e.preventDefault();
+  const err = $("#pw-error");
+  const [cur, nw, again] = ["#pw-current", "#pw-new", "#pw-again"].map((x) => $(x).value);
+  if (nw !== again) { err.textContent = "The two new passwords differ."; err.hidden = false; return; }
+  try {
+    await api("POST", "password", { current: cur, new: nw });
+    $("#dlg-password").close();
+    alert("Password changed. Log in again with the new one.");
+    location.reload();
+  } catch (x) { err.textContent = x.message; err.hidden = false; }
+}
+function showSecret(title, password) {
+  $("#secret-title").textContent = title;
+  $("#secret-value").textContent = password;
+  $("#dlg-secret").showModal();
+}
+async function renderLogins() {
+  if (S.me.auth !== "password") return;
+  $("#admin-accounts").hidden = false;
+  let users;
+  try { users = await api("GET", "admin/users"); } catch (e) { return toast(e.message); }
+  $("#admin-logins tbody").replaceChildren(...users.map((u) => el("tr", {},
+    el("td", {}, el("b", {}, u.user), u.user === S.me.user ? el("small", {}, " (you)") : null),
+    el("td", {}, el("input", { type: "checkbox", checked: u.admin, title: "Administrator", onchange: async (ev) => {
+      try { await api("PATCH", "admin/users/" + encodeURIComponent(u.user), { admin: ev.target.checked }); }
+      catch (x) { toast(x.message); ev.target.checked = !ev.target.checked; }
+    } })),
+    el("td", {}, el("small", {}, u.last_login || "never")),
+    el("td", {}, String(u.runs)),
+    el("td", {},
+      el("button", { class: "ghost", onclick: async () => {
+        if (!confirm(`Give ${u.user} a new password? Their current one stops working, and they're logged out.`)) return;
+        try { showSecret(`New password for ${u.user}`, (await api("POST", `admin/users/${encodeURIComponent(u.user)}/password`)).password); }
+        catch (x) { toast(x.message); }
+      } }, "New password"),
+      u.user === S.me.user ? null : el("button", { class: "ghost", onclick: async () => {
+        if (!confirm(`Remove ${u.user}? They can't log in any more; their runs stay (you can delete them).`)) return;
+        try { await api("DELETE", "admin/users/" + encodeURIComponent(u.user)); renderLogins(); } catch (x) { toast(x.message); }
+      } }, "Remove")))));
+}
+async function addUser(e) {
+  e.preventDefault();
+  const name = $("#new-user-name").value.trim();
+  try {
+    const r = await api("POST", "admin/users", { name, admin: $("#new-user-admin").checked });
+    $("#new-user").reset();
+    showSecret(`Password for ${r.user}`, r.password);
+    renderLogins();
+  } catch (x) { toast(x.message, 6000); }
 }
 
 start().catch((e) => { status("Couldn't load: " + e.message); console.error(e); });

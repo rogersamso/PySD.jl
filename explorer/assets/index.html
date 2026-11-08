@@ -19,6 +19,7 @@
   </nav>
   <span id="status" class="status"></span>
   <span id="who" class="who"></span>
+  <button id="account" class="ghost" hidden></button>
   <button id="theme" class="ghost" title="Light or dark">Theme</button>
 </header>
 
@@ -167,6 +168,15 @@
         </div>
         <div class="card">
           <h2>Users</h2>
+          <div id="admin-accounts" hidden>
+            <table id="admin-logins" class="table"><thead><tr><th>User</th><th>Admin</th><th>Last login</th><th>Runs</th><th></th></tr></thead><tbody></tbody></table>
+            <form id="new-user" class="row" style="margin-top:10px">
+              <input id="new-user-name" placeholder="new user's name" pattern="[A-Za-z0-9_.@\-]{1,64}" required>
+              <label class="check"><input type="checkbox" id="new-user-admin"> admin</label>
+              <button class="primary">Add user</button>
+            </form>
+            <h3>Disk</h3>
+          </div>
           <table id="admin-users" class="table"><thead><tr><th>User</th><th>Runs</th><th>Shared</th><th>Analyses</th><th>Disk</th></tr></thead><tbody></tbody></table>
         </div>
       </div>
@@ -178,6 +188,39 @@
   </main>
 </div>
 <div id="toast" class="toast" hidden></div>
+
+<div id="login" class="login" hidden>
+  <form id="login-form" class="card login-card">
+    <h1 id="login-title">PySD Explorer</h1>
+    <label class="block">User <input id="login-user" autocomplete="username" required></label>
+    <label class="block">Password <input id="login-password" type="password" autocomplete="current-password" required></label>
+    <p id="login-error" class="error" hidden></p>
+    <div class="row end"><button class="primary" id="login-go">Log in</button></div>
+  </form>
+</div>
+
+<div id="account-menu" class="menu" hidden>
+  <button id="menu-password" class="ghost">Change my password</button>
+  <button id="menu-logout" class="ghost">Log out</button>
+</div>
+
+<dialog id="dlg-password">
+  <form method="dialog" id="password-form">
+    <h2>Change my password</h2>
+    <label class="block">Current password <input id="pw-current" type="password" autocomplete="current-password" required></label>
+    <label class="block">New password (at least 10 characters) <input id="pw-new" type="password" autocomplete="new-password" minlength="10" required></label>
+    <label class="block">New password again <input id="pw-again" type="password" autocomplete="new-password" minlength="10" required></label>
+    <p id="pw-error" class="error" hidden></p>
+    <div class="row end"><button value="cancel" formnovalidate class="ghost">Cancel</button><button id="pw-go" class="primary" value="default">Change it</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlg-secret">
+  <h2 id="secret-title"></h2>
+  <p>Give this password to them privately. <b>It isn't shown again</b>; they can change it once logged in.</p>
+  <div class="row"><code id="secret-value" class="secret"></code><button id="secret-copy">Copy</button></div>
+  <div class="row end"><button id="secret-close" class="primary">Done</button></div>
+</dialog>
 <script src="vendor/plotly.min.js"></script>
 <script src="app.js"></script>
 </body>

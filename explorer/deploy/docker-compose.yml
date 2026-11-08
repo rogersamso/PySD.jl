@@ -1,4 +1,4 @@
-# The explorer behind Caddy: HTTPS, and a password for each user.
+# The explorer behind Caddy (HTTPS); the explorer asks for the users' passwords.
 # Settings in .env next to this file (see README.md).
 services:
   explorer:
@@ -7,7 +7,7 @@ services:
       dockerfile: explorer/deploy/Dockerfile
     restart: unless-stopped
     environment:
-      PYSD_USERS: header
+      PYSD_USERS: password
       PYSD_ADMINS: ${ADMINS}
       PYSD_TITLE: ${TITLE:-}
       PYSD_MODEL: ${MODEL:-}
@@ -29,7 +29,6 @@ services:
       DOMAIN: ${DOMAIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./users.caddy:/etc/caddy/users.caddy:ro
       - caddy-data:/data
     depends_on:
       - explorer

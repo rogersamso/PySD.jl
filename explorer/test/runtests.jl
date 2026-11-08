@@ -1,4 +1,4 @@
-using Test, PySD, PySDExplorer, HTTP, JSON3, DimensionalData
+using Test, PySD, PySDExplorer, HTTP, JSON3, DimensionalData, Dates
 import PySDExplorer as PE
 
 const region = Dim{:region}([:north, :south])
@@ -192,4 +192,103 @@ end
 
     # the explorer trusts the proxy's header only where the proxy is
     @test_throws ArgumentError serve(cup; dir, users = :header, host = "0.0.0.0")
+end
+
+@testset "explorer, its own logins" begin
+    # PBKDF2-HMAC-SHA256: the test vectors of RFC 7914 (section 11)
+    @test bytes2hex(PE._pbkdf2("password", Vector{UInt8}("salt"), 1)) == "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"
+    @test bytes2hex(PE._pbkdf2("password", Vector{UInt8}("salt"), 4096)) == "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"
+    h = PE.password_hash("correct horse"; iterations = 1000)
+    @test startswith(h, "pbkdf2-sha256\$1000\$") && PE.password_matches("correct horse", h) && !PE.password_matches("correct hors", h)
+    @test PE.password_hash("same"; iterations = 10) != PE.password_hash("same"; iterations = 10)   # salted
+    @test length(PE.new_password()) == 16
+
+    dir = mktempdir()
+    @test_throws ArgumentError PE.explorer(cup; dir, users = :password)          # no administrator yet
+    @test_throws ArgumentError PE.set_password!(dir, "roger", "short"; admin = true)
+    @test_throws ArgumentError PE.set_password!(dir, "local", "long enough pw"; admin = true)
+    PE.set_password!(dir, "roger", "roger's password"; admin = true)
+    @test (stat(joinpath(dir, "users.json")).mode & 0o077) == 0                   # the owner's only
+    ex = PE.explorer(cup; dir, users = :password, secure_cookies = false)
+    router = PE.routes(ex)
+    req(method, path; body = nothing, cookie = nothing, csrf = true, addr = "10.0.0.1") = begin
+        h = Pair{String,String}["X-Forwarded-For" => addr]
+        csrf && push!(h, "X-PySD-Request" => "1")
+        cookie === nothing || push!(h, "Cookie" => "pysd_session=$cookie")
+        router(HTTP.Request(method, path, h, body === nothing ? UInt8[] : JSON3.write(body)))
+    end
+    json(r) = JSON3.read(r.body)
+    login(user, password; kw...) = req("POST", "/api/login"; body = Dict("user" => user, "password" => password), kw...)
+    token(r) = match(r"pysd_session=([0-9a-f]+)", HTTP.header(r, "Set-Cookie")).captures[1]
+
+    r = req("GET", "/api/me")
+    @test r.status == 401 && json(r).login
+    @test req("GET", "/api/me"; cookie = "0123").status == 401
+    @test login("roger", "wrong one").status == 403
+    @test login("nobody", "whatever pw").status == 403                         # the same answer
+    @test login("roger", "roger's password"; csrf = false).status == 403        # no X-PySD-Request
+    r = login("roger", "roger's password")
+    @test r.status == 200
+    cookie = HTTP.header(r, "Set-Cookie")
+    @test occursin("HttpOnly", cookie) && occursin("SameSite=Strict", cookie) && !occursin("Secure", cookie)
+    roger = token(r)
+    me = json(req("GET", "/api/me"; cookie = roger))
+    @test me.user == "roger" && me.admin && me.auth == "password"
+    @test !any(s -> occursin(roger, JSON3.write(s)), values(ex.sessions))       # only the token's hash is kept
+    @test req("POST", "/api/runs"; body = Dict(), cookie = roger, csrf = false).status == 403
+
+    # administrators make users; a password is shown once
+    r = req("POST", "/api/admin/users"; body = Dict("name" => "laia"), cookie = roger)
+    @test r.status == 200
+    laia_pw = json(r).password
+    @test length(laia_pw) == 16 && !occursin(laia_pw, read(joinpath(dir, "users.json"), String))
+    @test req("POST", "/api/admin/users"; body = Dict("name" => "laia"), cookie = roger).status == 400   # exists
+    @test req("POST", "/api/admin/users"; body = Dict("name" => "a b"), cookie = roger).status == 400
+    laia = token(login("laia", laia_pw))
+    me = json(req("GET", "/api/me"; cookie = laia))
+    @test me.user == "laia" && !me.admin
+    @test req("GET", "/api/admin/users"; cookie = laia).status == 403
+    @test req("POST", "/api/admin/users"; body = Dict("name" => "x"), cookie = laia).status == 403
+    @test [u.user for u in json(req("GET", "/api/admin/users"; cookie = roger))] == ["laia", "roger"]
+
+    # her own password: the current one first; then her sessions end
+    @test req("POST", "/api/password"; body = Dict("current" => "nope", "new" => "a new password"), cookie = laia).status == 403
+    @test req("POST", "/api/password"; body = Dict("current" => laia_pw, "new" => "short"), cookie = laia).status == 400
+    @test req("POST", "/api/password"; body = Dict("current" => laia_pw, "new" => "laia's new one"), cookie = laia).status == 200
+    @test req("GET", "/api/me"; cookie = laia).status == 401
+    @test login("laia", laia_pw).status == 403
+    laia = token(login("laia", "laia's new one"))
+
+    # a reset by an administrator ends her sessions; admin or not; removing
+    r = req("POST", "/api/admin/users/laia/password"; cookie = roger)
+    @test r.status == 200 && req("GET", "/api/me"; cookie = laia).status == 401
+    laia = token(login("laia", json(r).password))
+    @test req("PATCH", "/api/admin/users/laia"; body = Dict("admin" => true), cookie = roger).status == 200
+    @test json(req("GET", "/api/me"; cookie = laia)).admin
+    @test req("PATCH", "/api/admin/users/laia"; body = Dict("admin" => false), cookie = roger).status == 200
+    @test req("PATCH", "/api/admin/users/roger"; body = Dict("admin" => false), cookie = roger).status == 400   # the last one
+    @test req("DELETE", "/api/admin/users/roger"; cookie = roger).status == 400                                # yourself
+    @test req("DELETE", "/api/admin/users/laia"; cookie = roger).status == 200
+    @test req("GET", "/api/me"; cookie = laia).status == 401
+
+    # logging out ends the session; too many failures block, for the name and for the address
+    @test req("POST", "/api/logout"; cookie = roger).status == 200
+    @test req("GET", "/api/me"; cookie = roger).status == 401
+    PE.set_password!(dir, "pau", "pau's password")       # (as deploy/users.jl does, while it runs)
+    for _ in 1:5
+        login("pau", "wrong password!"; addr = "10.0.0.9")
+    end
+    r = login("pau", "pau's password"; addr = "10.0.0.8")
+    @test r.status == 403 && occursin("too many", json(r).error)
+    @test login("roger", "roger's password"; addr = "10.0.0.8").status == 200       # others aren't
+    for i in 1:20
+        login("someone$i", "wrong password!"; addr = "10.0.0.7")
+    end
+    @test login("roger", "roger's password"; addr = "10.0.0.7").status == 403       # that address is
+    # an idle session ends
+    t = token(login("roger", "roger's password"; addr = "10.0.0.6"))
+    @test req("GET", "/api/me"; cookie = t).status == 200
+    ex.sessions[PE._token_key(t)]["seen"] = string(now() - Day(15)); PE._save_sessions!(ex)
+    @test req("GET", "/api/me"; cookie = t).status == 401
+    @test !haskey(ex.sessions, PE._token_key(t))                                    # and is forgotten
 end

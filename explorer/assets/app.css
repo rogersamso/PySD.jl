@@ -31,6 +31,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }      /* (over display: flex and grid below) */
 html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--text-primary);
   font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -183,6 +184,18 @@ body.static .static-hide { display: none !important; }
 .settings-row input[type=number] { width: 100px; }
 .settings-row small { display: block; }
 .mine { color: var(--text-muted); font-size: 12px; }
+
+.login { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+.login-card { width: min(380px, 100%); }
+.login-card h1 { font-size: 18px; margin: 0 0 14px; }
+.error { color: var(--parameter); font-size: 13px; }
+.menu { position: fixed; top: 46px; right: 16px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+  display: flex; flex-direction: column; padding: 4px; z-index: 40; box-shadow: 0 4px 16px rgba(0,0,0,.15); }
+.menu button { text-align: left; }
+dialog { background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border); border-radius: 10px; width: min(440px, calc(100% - 32px)); }
+dialog::backdrop { background: rgba(0,0,0,.35); }
+dialog h2 { margin: 0 0 12px; font-size: 16px; }
+.secret { font-size: 16px; padding: 6px 10px; background: var(--surface-2); border-radius: 6px; user-select: all; }
 
 @media (max-width: 900px) {
   .an-grid { grid-template-columns: 1fr; }

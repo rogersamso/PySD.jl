@@ -8,8 +8,9 @@ started together with Docker Compose.
   read-only.  Runs, analyses, saved views and settings live in a Docker
   volume, so they survive restarts and updates.
 - **caddy**: the web server people talk to.  It gets an HTTPS certificate
-  (Let's Encrypt) for your address, asks each person for their user name and
-  password, and passes only the name on to the explorer.
+  (Let's Encrypt) for your address and passes the requests on.  The explorer
+  itself asks for user names and passwords; administrators manage the users
+  in its Admin tab.
 
 The explorer itself isn't reachable from outside: only Caddy talks to it.
 
@@ -34,38 +35,39 @@ The explorer itself isn't reachable from outside: only Caddy talks to it.
 
    ```sh
    cp env.example .env
-   vim .env                     # DOMAIN, MODEL_DIR, ADMINS, TITLE…
-   cp users.caddy.example users.caddy
+   vim .env                     # DOMAIN, MODEL_DIR, TITLE…
+   docker compose build         # a while: Julia compiles PySD.jl
    ```
 
-3. A password for each person: run this, type the password, and put the line
-   it prints (after the user's name) in `users.caddy`:
+3. The first administrator (it asks for the password twice, at least 10
+   characters):
 
    ```sh
-   docker compose run --rm caddy caddy hash-password
+   docker compose run --rm explorer julia /app/users.jl /data set roger --admin
    ```
 
-   `users.caddy` then has lines like `ana $2a$14$…`.  Names are what people
-   see as the author of shared runs; use letters, digits, `.`, `_` or `-`.
 4. Start it:
 
    ```sh
-   docker compose up -d --build
+   docker compose up -d
    docker compose logs -f explorer      # wait for "PySD explorer: http://…"
    ```
 
-   The first build takes a while (Julia compiles PySD.jl).  Every start
-   builds the model and runs it once before it answers: minutes for a large
-   model.
+   Every start builds the model and runs it once before it answers: minutes
+   for a large model.
 
-Then open `https://DOMAIN`, log in, and the administrators (`ADMINS`) see an
-**Admin** tab: how many simulations run at once, the limits per user, whether
-users see the model's code, and everyone's jobs.
+Then open `https://DOMAIN` and log in.  Administrators see an **Admin** tab:
+the users (add one: the explorer makes a password and shows it once; a new
+password for someone who forgot theirs; administrator or not; remove), how
+many simulations run at once, the limits per user, whether users see the
+model's code, and everyone's jobs.  Everyone can change their own password
+(the menu with their name).
 
 ## Day to day
 
-- **Add or remove a user**: edit `users.caddy`, then `docker compose restart caddy`.
-  A removed user's runs stay (administrators see them, and can delete them).
+- **Add or remove a user**: in the Admin tab.  A removed user's runs stay
+  (administrators see them, and can delete them).  If no administrator can
+  log in any more: `docker compose exec explorer julia /app/users.jl /data set roger --admin`.
 - **Another model**: put it in `MODEL_DIR` (or change `MODEL_DIR`), then
   `docker compose restart explorer`.  Runs of the previous model don't belong
   with the new one: use another volume (`docker compose down`, change the
@@ -89,7 +91,12 @@ table, with their own limits (how many, how many parameters each).
 
 - The translated model is Julia code that runs on the server.  Only put
   models you trust in `MODEL_DIR`; users can't upload models.
-- Caddy replaces any `X-PySD-User` a browser sends: the explorer trusts the
-  name only because it comes from Caddy.  Don't publish port 8080.
+- Passwords are kept as PBKDF2-SHA256 hashes (600,000 rounds, salted) in
+  the data volume's `users.json`; sessions as hashes of their tokens.  Five
+  failed logins for a name (twenty from an address) in 15 minutes block more
+  for 15 minutes.  Sessions end after 14 days without use, 30 days in all,
+  or when the password changes.
+- Don't publish port 8080: the explorer's cookies are for HTTPS only, which
+  Caddy provides.
 - Keep the server updated (`unattended-upgrades` on Ubuntu or Debian), and
   allow SSH with keys only.
