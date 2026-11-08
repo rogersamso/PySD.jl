@@ -1,0 +1,12 @@
+# HTTPS for DOMAIN (a certificate from Let's Encrypt, renewed by Caddy), a
+# password for each user (users.caddy), and the user's name passed to the
+# explorer.  Whatever a browser sends as X-PySD-User is replaced.
+{$DOMAIN} {
+	basic_auth {
+		import users.caddy
+	}
+	reverse_proxy explorer:8080 {
+		header_up X-PySD-User {http.auth.user.id}
+	}
+	encode gzip
+}

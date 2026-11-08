@@ -1,0 +1,9 @@
+# the explorer's image (explorer/deploy/Dockerfile) needs src, ext, Project.toml and explorer
+**/Manifest.toml
+.git
+docs
+test
+benchmark
+explorer/test
+explorer/deploy/.env
+explorer/deploy/users.caddy

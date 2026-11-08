@@ -104,6 +104,10 @@ main { flex: 1; overflow: auto; padding: 12px 16px; min-width: 0; }
   margin-top: 4px; max-height: 66px; overflow: auto; }
 .elements label { display: inline-flex; gap: 4px; align-items: center; }
 .plot { height: 300px; }
+/* the plots take the screen's height: more with fewer columns */
+.panels.cols-1 .plot { height: calc(100vh - 300px); min-height: 420px; }
+.panels.cols-2 .plot { height: calc(50vh - 120px); min-height: 340px; }
+.panels.cols-3 .plot { height: calc(50vh - 120px); min-height: 300px; }
 
 .runs-grid { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(320px, 1.2fr); gap: 16px; align-items: start; }
 .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
@@ -164,7 +168,24 @@ body.static .static-hide { display: none !important; }
 .code-text a.ref { color: inherit; text-decoration: underline dotted var(--text-muted); cursor: pointer; }
 .code-text a.ref:hover { color: var(--accent); }
 
+.who { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
+.jobs { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.job { display: flex; gap: 8px; align-items: center; font-size: 13px; padding: 6px 8px; border-radius: 6px; background: var(--surface-2); }
+.job .what { flex: 1; min-width: 0; }
+.job progress { width: 120px; }
+.job.failed { outline: 1px solid var(--parameter); }
+.an-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; }
+.pick-list { max-height: 220px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; margin-top: 6px; font-size: 13px; }
+.pick-list.tall { max-height: 380px; }
+.pick-list label { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; }
+.pick-list label small { margin-left: auto; white-space: nowrap; }
+.settings-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.settings-row input[type=number] { width: 100px; }
+.settings-row small { display: block; }
+.mine { color: var(--text-muted); font-size: 12px; }
+
 @media (max-width: 900px) {
+  .an-grid { grid-template-columns: 1fr; }
   .code-grid { grid-template-columns: 1fr; }
   .layout { flex-direction: column; height: auto; }
   aside { width: auto; max-height: 45vh; border-right: 0; border-bottom: 1px solid var(--border); }
