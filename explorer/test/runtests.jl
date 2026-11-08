@@ -292,3 +292,76 @@ end
     @test req("GET", "/api/me"; cookie = t).status == 401
     @test !haskey(ex.sessions, PE._token_key(t))                                    # and is forgotten
 end
+
+@testset "explorer, uploaded sheets" begin
+    xd = mktempdir()
+    sheet(f, pairs...) = (PE.XLSX.writetable(joinpath(xd, f), [n => (; x = [v]) for (n, v) in pairs]...; overwrite = true);
+                          joinpath(xd, f))
+    own = sheet("scen.xlsx", "NZP" => 2.0, "Readme" => 0.0)
+    m = Model(@equations(begin
+        @parameters begin
+            k = constant(scen, "A2"), [unit = NoUnits]
+        end
+        @variables begin
+            y(t), [unit = NoUnits]
+        end
+        ∂t(y) ~ k
+        y(t₀) ~ 0
+    end); time = 0:1:4, time_unit = u"s", inputs = (; scen = PySD.excel(own, "NZP")))
+    dir = mktempdir()
+    ex = PE.explorer(m; dir, users = :header, admins = ["roger"])
+    high = read(sheet("scen_high.xlsx", "NZP" => 5.0, "BAU" => 1.0, "Info input variables" => 0.0))
+
+    # checked: one of the model's files, an .xlsx file, not a bomb, within the limits
+    @test_throws ArgumentError PE.upload!(ex, "ana", high; replaces = "energy")
+    @test_throws ArgumentError PE.upload!(ex, "ana", rand(UInt8, 1000); replaces = "scen")
+    bomb = copy(high)
+    for k in findall(i -> bomb[i:i+3] == UInt8[0x50, 0x4b, 0x01, 0x02], 1:length(bomb)-3)
+        bomb[k+24:k+27] .= reinterpret(UInt8, [UInt32(900_000_000)])      # "unpacks to 900 MB"
+    end
+    @test_throws ArgumentError PE.upload!(ex, "ana", bomb; replaces = "scen")
+    fake = copy(high); fake[200:end] .= 0x00                               # (an .xlsx that doesn't open)
+    @test_throws ArgumentError PE.upload!(ex, "ana", fake; replaces = "scen")
+    @test isempty(filter(f -> endswith(f, ".xlsx"), readdir(joinpath(dir, "inputs"))))   # nothing kept from those
+
+    u = PE.upload!(ex, "ana", high; replaces = "scen", label = "High")
+    @test u["sheets"] == ["NZP", "BAU", "Info input variables"] && u["owner"] == "ana" && !u["shared"]
+    ana = PE.inputs_info(ex, "ana")["scen"]
+    @test [c["label"] for c in ana] == ["scen.xlsx › NZP", "High › NZP", "High › BAU"]      # (no notes)
+    @test length(PE.inputs_info(ex, "joan")["scen"]) == 1                                   # hers only
+
+    # a run with her sheet: its values
+    id = ana[2]["id"]
+    job = finish(ex, PE.submit_run!(ex, "ana", "high", Pair{String,Any}[], ["scen" => id]))
+    @test job.status === :done
+    r = ex.runs[job.result]
+    base = only(x for x in values(ex.runs) if x.meta["owner"] == "")
+    @test PE.series(ex, "ana", "y", [r.meta["id"]])["runs"][r.meta["id"]][1][end] == 20      # 5 × 4
+    @test PE.series(ex, "ana", "y", [base.meta["id"]])["runs"][base.meta["id"]][1][end] == 8
+    @test r.meta["inputs"] == Dict("scen" => id)
+    @test_throws ArgumentError PE.submit_run!(ex, "joan", "", Pair{String,Any}[], ["scen" => id])   # not hers
+
+    # shared: others choose it too; only she (or an administrator) changes or deletes it
+    @test_throws KeyError PE.change_upload!(ex, "joan", u["id"], Dict(:shared => true))     # (not even seen)
+    PE.change_upload!(ex, "ana", u["id"], Dict(:shared => true))
+    joan = PE.inputs_info(ex, "joan")["scen"]
+    @test joan[2]["label"] == "High (by ana) › NZP"
+    @test_throws PE.Forbidden PE.delete_upload!(ex, "joan", u["id"])
+
+    # the limits
+    PE.update_settings!(ex, Dict("max_uploads_per_user" => 1))
+    @test_throws ArgumentError PE.upload!(ex, "ana", high; replaces = "scen")
+    PE.update_settings!(ex, Dict("max_uploads_per_user" => 10, "max_upload_mb" => 1))
+    @test_throws ArgumentError PE.upload!(ex, "ana", vcat(high, zeros(UInt8, 2^20)); replaces = "scen")
+
+    # kept on disk; deleting removes the file
+    @test length(PE.explorer(m; dir, users = :header).uploads) == 1
+    @test PE.delete_upload!(ex, "ana", u["id"])
+    @test isempty(readdir(joinpath(dir, "inputs")))
+
+    # the routes: the file as the request's body
+    router = PE.routes(ex)
+    resp = router(HTTP.Request("POST", "/api/uploads?replaces=scen&label=Mine", ["X-PySD-User" => "pere"], high))
+    @test resp.status == 200 && JSON3.read(resp.body).label == "Mine"
+    @test JSON3.read(router(HTTP.Request("GET", "/api/uploads", ["X-PySD-User" => "pere"])).body).files == ["scen"]
+end

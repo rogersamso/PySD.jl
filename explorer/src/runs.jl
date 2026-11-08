@@ -3,7 +3,7 @@
 
 # A run's parameters and input sheets as run_model takes them, checked: only
 # the model's parameters, numbers of the right shape, the listed sheets.
-function _run_args(ex::Explorer, params, inputs)
+function _run_args(ex::Explorer, params, inputs; user = "local")
     ps = Pair{Symbol,Any}[]
     for (k, v) in params
         n = Symbol(k)
@@ -20,11 +20,12 @@ function _run_args(ex::Explorer, params, inputs)
     ins = Pair{Symbol,Any}[]
     kept = Dict{String,Any}()
     isempty(inputs) || refresh_inputs!(ex)
+    all_choices = isempty(inputs) ? ex.inputs : first(input_choices(ex, user))     # (the user's uploads too)
     for (k, id) in inputs
-        choices = get(ex.inputs, String(k), nothing)
+        choices = get(all_choices, String(k), nothing)
         choices === nothing && throw(ArgumentError("`$k` is not an input sheet"))
         c = findfirst(c -> _choice_id(c) == id, choices)
-        c === nothing && throw(ArgumentError("`$id` is not a sheet for `$k`"))
+        c === nothing && throw(ArgumentError("`$(split(id, '|')[end])` of that file isn't a sheet you can use for `$k` (deleted, or not shared?)"))
         c == 1 && continue
         push!(ins, Symbol(k) => PySD.excel(choices[c]...))
         kept[String(k)] = String(id)
@@ -40,7 +41,7 @@ _simulate(ex::Explorer, ps, ins) = Base.invokelatest(run_model, ex.model; params
 A run, checked now and queued: it starts when a simulation slot is free.
 """
 function submit_run!(ex::Explorer, user, label, params, inputs)
-    ps, ins, kept_params, kept_inputs = _run_args(ex, params, inputs)
+    ps, ins, kept_params, kept_inputs = _run_args(ex, params, inputs; user)
     if !is_admin(ex, user)
         mine = count(r -> r.meta["owner"] == user, values(ex.runs)) +
                count(j -> j.user == user && j.kind == "run" && j.status in (:queued, :running), ex.jobs)

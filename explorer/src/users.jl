@@ -11,11 +11,14 @@ const DEFAULT_SETTINGS = Dict{String,Any}(
     "max_runs_per_user" => 30,       # runs kept (an analysis keeps no runs: only its table)
     "max_analyses_per_user" => 5,
     "max_params_per_analysis" => 100,
+    "max_uploads_per_user" => 10,    # versions of the model's Excel files
+    "max_upload_mb" => 20,
     "show_code" => true)             # the model's code, for users who aren't administrators
 
 const SETTING_LIMITS = Dict("max_parallel" => (1, 64), "max_jobs_per_user" => (1, 100),
                             "max_runs_per_user" => (1, 10_000), "max_analyses_per_user" => (1, 1000),
-                            "max_params_per_analysis" => (1, 100_000))
+                            "max_params_per_analysis" => (1, 100_000), "max_uploads_per_user" => (0, 1000),
+                            "max_upload_mb" => (1, 200))
 
 function _load_settings(dir)
     s = copy(DEFAULT_SETTINGS)
@@ -80,7 +83,8 @@ function me_info(ex::Explorer, user)
     return Dict("user" => user, "admin" => is_admin(ex, user), "code" => !isempty(ex.code) && may_see_code(ex, user),
                 "local" => ex.auth.mode === :local, "auth" => String(ex.auth.mode),
                 "limits" => Dict(k => s[k] for k in ("max_runs_per_user", "max_analyses_per_user",
-                                                     "max_params_per_analysis", "max_jobs_per_user")),
+                                                     "max_params_per_analysis", "max_jobs_per_user",
+                                                     "max_uploads_per_user", "max_upload_mb")),
                 "runs" => count(r -> r.meta["owner"] == user, values(ex.runs)),
                 "analyses" => count(a -> a["owner"] == user, values(ex.analyses)))
 end

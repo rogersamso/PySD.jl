@@ -7,8 +7,10 @@ A web page to explore a PySD.jl model in the browser:
 - **Plot** any name; arrays by element, or their sum.  Each plot compares the
   runs you pick: their values, or their difference (absolute or %) from one run.
 - **Run** the model with other parameter values (sliders when the model gives
-  limits, boxes otherwise; arrays element by element) or other input sheets.
-  Runs are kept on disk and listed next time.
+  limits, boxes otherwise; arrays element by element) or other input sheets:
+  versions of the model's Excel files found in `input_dirs`, or uploaded from
+  the page (each user's own until shared).  Runs are kept on disk and listed
+  next time.
 - **Sensitivity**: analyses started from the page (each parameter changed in
   turn, around a run; elasticities of the results you pick at the end of the
   run), or a table from a file, as bar charts.

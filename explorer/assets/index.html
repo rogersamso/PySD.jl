@@ -80,6 +80,18 @@
           <h2>New run</h2>
           <label class="block">Name <input id="run-label" type="text" placeholder="e.g. High climate sensitivity"></label>
           <div id="inputs-box"></div>
+          <details id="uploads-box" class="uploads static-hide">
+            <summary>Upload your own version of a sheet's file</summary>
+            <p class="note">A copy of one of the model's Excel files with other values (another scenario, other data):
+              its sheets can then replace the model's in your runs. Only you see it until you share it. <span id="upload-limits"></span></p>
+            <form id="upload-form" class="upload-form">
+              <label class="block">It replaces <select id="upload-replaces"></select></label>
+              <label class="block">Name <input id="upload-label" placeholder="e.g. High ambition 2030"></label>
+              <label class="block">File <input id="upload-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label>
+              <div class="row end"><button class="primary" id="upload-go">Upload</button></div>
+            </form>
+            <div id="upload-list"></div>
+          </details>
           <h3>Parameters <small id="changed-count"></small></h3>
           <div id="changed" class="changed"></div>
           <input id="param-search" type="search" placeholder="Find a parameter…" autocomplete="off">

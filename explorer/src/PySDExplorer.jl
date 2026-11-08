@@ -75,6 +75,7 @@ mutable struct Explorer
     sources::Dict{Symbol,Vector{Tuple{String,Int}}}     # name => (file id, line) of its declaration and equations
     runs::Dict{String,Run}
     analyses::Dict{String,Dict{String,Any}}
+    uploads::Dict{String,Dict{String,Any}}  # users' versions of the model's Excel files
     auth::Auth
     settings::Dict{String,Any}
     jobs::Vector{Job}
@@ -94,6 +95,7 @@ include("users.jl")
 include("auth.jl")
 include("runs.jl")
 include("jobs.jl")
+include("uploads.jl")
 include("sensitivity.jl")
 include("static.jl")
 include("routes.jl")
@@ -156,7 +158,7 @@ function explorer(model; dir = "explorer-data", title = "", input_dirs = String[
     editable, sizes = _editable(m, vars, base)
     code, sources = _code(m, vars.name)
     ex = Explorer(m, title, vars, row, editable, sizes, _input_choices(m, input_dirs), String.(input_dirs), String(dir),
-                  separator, code, sources, Dict{String,Run}(), Dict{String,Dict{String,Any}}(),
+                  separator, code, sources, Dict{String,Run}(), Dict{String,Dict{String,Any}}(), Dict{String,Dict{String,Any}}(),
                   Auth(users, user_header, Set(String.(admins))), _load_settings(dir), Job[],
                   Threads.Condition(), 0, ReentrantLock(), Dict{String,String}(),
                   Dict{String,Dict{String,Any}}(), Dict{String,Dict{String,Any}}(), Dict{String,Vector{DateTime}}(),
@@ -164,6 +166,7 @@ function explorer(model; dir = "explorer-data", title = "", input_dirs = String[
     users === :password && lock(() -> _refresh_auth!(ex), ex.lock)
     _load_runs!(ex)
     _load_analyses!(ex)
+    _load_uploads!(ex)
     sensitivity === nothing || (ex.analyses["file"] = _sensitivity_file(sensitivity, row))
     isempty(ex.runs) && _save!(ex, base; label = "Base", owner = "", shared = true)
     return ex

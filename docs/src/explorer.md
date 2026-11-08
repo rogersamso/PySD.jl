@@ -34,7 +34,8 @@ What the page shows comes from the model's declarations, through
 translated by PySD has all of them.
 
 Other options: `input_dirs` (folders whose `.xlsx` sheets, named like the
-model's own files, can replace its input sheets in a run), `sensitivity` (a
+model's own files, can replace its input sheets in a run; users can also
+upload their own versions of those files from the page), `sensitivity` (a
 table of elasticities from a file), `title`, `separator` (how set titles
 split into a tree), `host` and `port`.
 

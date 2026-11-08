@@ -105,7 +105,7 @@ function submit_analysis!(ex::Explorer, user; label = "", around = "", params, o
     end
     base = isempty(around) ? nothing : _visible_run(ex, user, String(around))
     ps, ins, _, _ = _run_args(ex, base === nothing ? Dict() : base.meta["params"],
-                              base === nothing ? Dict() : base.meta["inputs"])
+                              base === nothing ? Dict() : base.meta["inputs"]; user)
     label = isempty(strip(label)) ? "Analysis $(count(a -> a["owner"] == user, values(ex.analyses)) + 1)" : String(label)
     return submit!(ex, user, "analysis", label) do job
         _analyse(ex, job; label, owner = user, around = String(around), names, outs, ps, ins, step = Float64(step), years)

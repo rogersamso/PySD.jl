@@ -72,9 +72,11 @@ model's code, and everyone's jobs.  Everyone can change their own password
   `docker compose restart explorer`.  Runs of the previous model don't belong
   with the new one: use another volume (`docker compose down`, change the
   volume's name in `docker-compose.yml`), or delete them in the Admin tab.
-- **New input sheets** (other scenarios): put `.xlsx` files named like the
-  model's own (`scen_w_high.xlsx` for `scen_w.xlsx`) in a folder listed in
-  `INPUT_DIRS`; the Runs tab finds them, no restart needed.
+- **New input sheets** (other scenarios): users upload their own versions of
+  the model's Excel files in the Runs tab (private until shared; the Admin
+  tab sets how many and how large).  For everyone at once, put `.xlsx` files
+  named like the model's own (`scen_w_high.xlsx` for `scen_w.xlsx`) in a
+  folder listed in `INPUT_DIRS`; the Runs tab finds them, no restart needed.
 - **Update** PySD.jl and the explorer: `git pull`, then `docker compose up -d --build`.
 - **Back up**: the `explorer-data` volume (`docker run --rm -v deploy_explorer-data:/d -v $PWD:/b alpine tar czf /b/explorer-data.tgz -C /d .`).
 

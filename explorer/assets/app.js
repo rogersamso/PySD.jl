@@ -18,7 +18,7 @@ const S = {
   panels: [], cache: new Map(), edits: new Map(), inputs: {}, views: [], sens: null,
   code: [], codeText: new Map(), codeFile: null,
   me: { user: "", admin: false, code: false, local: true, limits: {} }, analyses: [], jobs: [],
-  anParams: new Set(), anOutputs: new Set(), adminTimer: null, jobsTimer: null,
+  anParams: new Set(), anOutputs: new Set(), adminTimer: null, jobsTimer: null, uploads: [], uploadFiles: [],
 };
 
 // ---------------------------------------------------------------- data access
@@ -44,6 +44,7 @@ function staticApi(method, path) {
   if (p === "views") return STATIC.view ? [STATIC.view] : [];
   if (p === "code") return STATIC.code || [];
   if (p === "inputs") return STATIC.model.inputs;
+  if (p === "uploads") return { uploads: [], files: [] };
   if (p.startsWith("code/")) return { text: (STATIC.texts || {})[decodeURIComponent(p.slice(5))] || "" };
   if (p === "series") {
     const name = new URLSearchParams(q).get("name");
@@ -117,7 +118,7 @@ async function start() {
   wire();
   renderTree(); renderRunChips(); renderBaseline(); renderViews(); renderRunsTable();
   renderInputs(); renderParams(); renderChanged(); renderSensPick(); renderSens(); renderCodeList();
-  renderAnalysisForm(); refreshJobs();
+  renderAnalysisForm(); refreshJobs(); refreshInputs();
   if (STATIC && STATIC.view) await applyView(STATIC.view);
   else await renderPanels();
   status(`${S.model.names.length} names · ${S.runs.length} runs${STATIC ? " · read-only copy" : ""}`);
@@ -161,6 +162,7 @@ function wire() {
   $("#menu-password").addEventListener("click", () => { $("#pw-error").hidden = true; $("#password-form").reset(); $("#dlg-password").showModal(); });
   $("#password-form").addEventListener("submit", changePassword);
   $("#new-user").addEventListener("submit", addUser);
+  $("#upload-form").addEventListener("submit", uploadSheet);
   $("#secret-copy").addEventListener("click", () => navigator.clipboard.writeText($("#secret-value").textContent).then(() => toast("Copied.")));
   $("#secret-close").addEventListener("click", () => { $("#secret-value").textContent = ""; $("#dlg-secret").close(); });
   $("#sens-top").addEventListener("change", renderSens);
@@ -196,7 +198,7 @@ function tab(name) {
   if (name === "sensitivity") { renderSens(); renderAnalysisForm(); }
   clearInterval(S.adminTimer);
   if (name === "admin") { renderAdmin(); renderLogins(); S.adminTimer = setInterval(renderAdmin, 3000); }
-  if (name === "runs" && !STATIC) api("GET", "inputs").then((i) => { S.model.inputs = i; renderInputs(); }).catch(() => {});
+  if (name === "runs" && !STATIC) refreshInputs();
   if (name === "explore") document.querySelectorAll(".plot").forEach((p) => Plotly.Plots.resize(p));
 }
 
@@ -675,6 +677,12 @@ function renderInputs() {
   const box = $("#inputs-box");
   const entries = Object.entries(S.model.inputs).filter(([, cs]) => cs.length > 1);
   if (!entries.length) {
+    if (!STATIC && S.uploadFiles.length) {
+      box.replaceChildren(el("h3", {}, "Input sheets"), el("p", { class: "note" },
+        `The model reads ${Object.keys(S.model.inputs).length} Excel sheets; no other versions of them yet. ` +
+        "Upload one below to choose it here; single values from the sheets can also be changed one by one in Parameters."));
+      return;
+    }
     const own = Object.keys(S.model.inputs).length;
     box.replaceChildren(el("p", { class: "note" }, `Input sheets: the model reads ${own} Excel sheets, and there are no other versions of them yet. ` +
       "Another version of a sheet (a different scenario, say) is a copy of its file with other values, named like it " +
@@ -1066,6 +1074,8 @@ const SETTINGS = [
   ["max_runs_per_user", "Runs kept per user", "about 14 MB each for a large model"],
   ["max_analyses_per_user", "Analyses kept per user", "a small table each"],
   ["max_params_per_analysis", "Parameters per analysis", "one run each, one after another"],
+  ["max_uploads_per_user", "Uploaded files per user", "their own versions of the model's Excel files; 0: no uploads"],
+  ["max_upload_mb", "Largest upload (MB)", "an uploaded Excel file at most this big"],
   ["show_code", "Show the code to users", "administrators always see it"],
 ];
 async function renderAdmin() {
@@ -1076,7 +1086,7 @@ async function renderAdmin() {
     box.replaceChildren(...SETTINGS.map(([k, label, help]) => el("div", { class: "settings-row" },
       el("label", { for: "set-" + k }, label, el("small", {}, help.replace("THREADS", a.threads))),
       k === "show_code" ? el("input", { type: "checkbox", id: "set-" + k, checked: a.settings[k] }) :
-        el("input", { type: "number", id: "set-" + k, value: a.settings[k], min: 1, step: 1 }))));
+        el("input", { type: "number", id: "set-" + k, value: a.settings[k], min: k === "max_uploads_per_user" ? 0 : 1, step: 1 }))));
   }
   $("#admin-threads").textContent = `${a.running} simulation${a.running === 1 ? "" : "s"} running now; ${a.threads} Julia threads.`;
   $("#admin-users tbody").replaceChildren(...a.users.map((u) => el("tr", {},
@@ -1176,6 +1186,63 @@ async function addUser(e) {
     showSecret(`Password for ${r.user}`, r.password);
     renderLogins();
   } catch (x) { toast(x.message, 6000); }
+}
+
+// ---------------------------------------------------------------- input sheets: the user's choices, uploads
+async function refreshInputs() {
+  if (STATIC) return;
+  try {
+    const [inputs, up] = await Promise.all([api("GET", "inputs"), api("GET", "uploads")]);
+    S.model.inputs = inputs; S.uploads = up.uploads; S.uploadFiles = up.files;
+  } catch (e) { return; }
+  renderInputs(); renderUploads();
+}
+function renderUploads() {
+  const L = S.me.limits || {};
+  const mine = S.uploads.filter((u) => u.owner === S.me.user).length;
+  const box = $("#uploads-box");
+  box.hidden = !S.uploadFiles.length || (!S.me.admin && L.max_uploads_per_user === 0);
+  $("#upload-limits").textContent = S.me.admin || S.me.local ? "" :
+    `You keep ${mine} of ${L.max_uploads_per_user} files, ${L.max_upload_mb} MB each at most.`;
+  const sel = $("#upload-replaces");
+  const keep = sel.value;
+  sel.replaceChildren(...S.uploadFiles.map((f) => el("option", { value: f }, f + ".xlsx")));
+  if (S.uploadFiles.includes(keep)) sel.value = keep;
+  $("#upload-list").replaceChildren(...S.uploads.map((u) => el("div", { class: "upload-row" },
+    el("span", { class: "t" }, el("b", {}, u.label), ` — replaces ${u.replaces}.xlsx; sheets: ${u.sheets.join(", ")}`),
+    el("small", {}, u.owner === S.me.user ? (u.shared ? "shared" : "private") : "by " + u.owner),
+    mayChange(u) ? el("button", { class: "ghost", onclick: () => changeUpload(u, { shared: !u.shared }) }, u.shared ? "Unshare" : "Share") : null,
+    mayChange(u) ? el("button", { class: "ghost", title: "Delete", onclick: () => deleteUpload(u) }, "✕") : null)));
+}
+async function uploadSheet(e) {
+  e.preventDefault();
+  const file = $("#upload-file").files[0];
+  if (!file) return;
+  const limit = (S.me.limits || {}).max_upload_mb;
+  if (limit && file.size > limit * 2 ** 20) return toast(`The file is larger than ${limit} MB.`);
+  const q = new URLSearchParams({ replaces: $("#upload-replaces").value, label: $("#upload-label").value });
+  $("#upload-go").disabled = true;
+  try {
+    const r = await fetch("api/uploads?" + q, { method: "POST", body: await file.arrayBuffer(),
+      headers: { "X-PySD-Request": "1", "Content-Type": "application/octet-stream" } });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    $("#upload-form").reset();
+    toast(`"${j.label}" uploaded: its sheets (${j.sheets.join(", ")}) are now in the input sheets' choices.`, 6000);
+    await refreshInputs();
+  } catch (x) { toast("The upload failed: " + x.message, 8000); }
+  $("#upload-go").disabled = false;
+}
+async function changeUpload(u, change) {
+  try { await api("PATCH", "uploads/" + encodeURIComponent(u.id), change); await refreshInputs(); } catch (x) { toast(x.message); }
+}
+async function deleteUpload(u) {
+  if (!confirm(`Delete "${u.label}"? Runs made with it keep their results.`)) return;
+  try {
+    await api("DELETE", "uploads/" + encodeURIComponent(u.id));
+    for (const [k, id] of Object.entries(S.inputs)) if (id.includes(u.id)) delete S.inputs[k];
+    await refreshInputs(); renderChanged();
+  } catch (x) { toast(x.message); }
 }
 
 start().catch((e) => { status("Couldn't load: " + e.message); console.error(e); });
