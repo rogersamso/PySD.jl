@@ -4,6 +4,37 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## 0.11.0 (2026-11-08)
+
+### Added
+
+- `variables(model)`: a model's names as a table (Tables.jl), read from their
+  declarations: name, title, set, kind, unit, description, limits,
+  dimensions and elements.  `helpers = true` also lists the names a
+  translator adds (declared with `helper = true`).
+- `@equations [name] [key = value …] begin … end`: metadata of the set
+  itself, such as `title = "Climate: temperature"` (`EquationSet.metadata`).
+- Declarations document `title = "…"` (the name to show) and
+  `limits = (min, max)` or `(min, max, step)`.
+- **PySDExplorer**, a package in `explorer/`: a web page to explore a model
+  by set, plot and compare runs, run it with other parameter values or input
+  sheets, show a sensitivity table and the model's code, and export figures,
+  data or one HTML file that opens without a server.  See `explorer/README.md`.
+
+### Changed
+
+- `Tables.columns` of a run builds the columns of arrays behind a function
+  barrier: much faster for large models (it took 12 s for 31,631 columns).
+
+### Compatibility
+
+- Models translated with PySD for PySD.jl 0.11.0 use `@equations title = …`
+  and the `title`, `limits` and `helper` metadata; they need 0.11.0.  Older
+  translations run unchanged.
+- A component's variable named `metadata` can no longer be referred to as
+  `component.metadata` (that is the set's metadata), as already for `name`,
+  `equations` and the set's other fields.
+
 ## 0.10.0 (2026-11-05)
 
 ### Added
