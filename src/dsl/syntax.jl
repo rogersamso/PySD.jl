@@ -27,9 +27,10 @@ end
 
 What `@equations` returns: declarations, equations and the Julia values they
 use.  A set with a name is a component; its names get the name as a prefix
-(`retailer.inventory`).  `defined_in` is the module the set is written in: a
-model built from it keeps its compiled code there (so that a package can
-precompile it).
+(`retailer.inventory`).  `metadata` is the set's own (`title`, or anything
+`@equations` was given as `key = value`).  `defined_in` is the module the set is
+written in: a model built from it keeps its compiled code there (so that a
+package can precompile it).
 """
 struct EquationSet
     name::Union{Nothing,Symbol}
@@ -37,6 +38,7 @@ struct EquationSet
     equations::Vector{Equation}
     env::Dict{Symbol,Any}
     defined_in::Module
+    metadata::Dict{Symbol,Any}
 end
 
 Base.show(io::IO, s::EquationSet) =
@@ -53,7 +55,7 @@ struct ComponentRef
 end
 
 """
-    @equations [name] begin
+    @equations [name] [key = value …] begin
         @parameters begin
             τ = 10, [unit = u"minute", description = "Characteristic time"]
         end
@@ -67,21 +69,34 @@ end
 A set of equations with the declarations of their names.  `@parameters` are
 given values, `@variables` have an equation (`x(t)` when they change with
 time); each declaration carries `[unit = …]` and optionally `description`,
-`nonnegative`, `input`, `output`.  Equations use `~`.  With a `name`, the set
-is a component.  `Model` builds a model from one or more sets.
+`nonnegative`, `input`, `output`, `title` (the name to show), `limits`
+(`(min, max)` or `(min, max, step)`), or any other key.  Equations use `~`.
+With a `name`, the set is a component.  `key = value` pairs before the block
+are the set's own metadata: `title = "Energy demand"` names the set in tables
+and interfaces ([`variables`](@ref)).  `Model` builds a model from one or more
+sets.
 """
 macro equations(args...)
-    length(args) in (1, 2) || throw(ArgumentError("use @equations [name] begin … end"))
-    name = length(args) == 2 ? args[1] : nothing
+    isempty(args) && throw(ArgumentError("use @equations [name] [key = value …] begin … end"))
     block = args[end]
     (block isa Expr && block.head === :block) ||
         throw(ArgumentError("@equations needs a begin … end block"))
-    return esc(_equations_code(name, block, __source__, __module__))
+    name, meta = nothing, Any[]
+    for a in args[1:end-1]
+        if a isa Expr && a.head in (:(=), :kw) && a.args[1] isa Symbol
+            push!(meta, :($(QuoteNode(a.args[1])) => $(a.args[2])))
+        elseif name === nothing && isempty(meta)
+            name = a
+        else
+            throw(ArgumentError("use @equations [name] [key = value …] begin … end, not `$a`"))
+        end
+    end
+    return esc(_equations_code(name, block, __source__, __module__, meta))
 end
 
 const _RESERVED = (:t, :t₀, :Δt, :∂t, :end, :begin, :nothing, :true, :false)
 
-function _equations_code(name, block, source, mod)
+function _equations_code(name, block, source, mod, meta = Any[])
     decls, eqs, env = gensym(:declarations), gensym(:equations), gensym(:env)
     body = Any[]
     declared = Symbol[]
@@ -93,7 +108,8 @@ function _equations_code(name, block, source, mod)
         let $decls = $Declaration[], $eqs = $Equation[], $env = Dict{Symbol,Any}()
             $(body...)
             $(captures...)
-            $EquationSet($(name === nothing ? nothing : name), $decls, $eqs, $env, $mod)
+            $EquationSet($(name === nothing ? nothing : name), $decls, $eqs, $env, $mod,
+                         Dict{Symbol,Any}($(meta...)))
         end
     end
 end

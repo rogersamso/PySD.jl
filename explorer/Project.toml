@@ -1,0 +1,27 @@
+name = "PySDExplorer"
+uuid = "f470568b-339e-4846-9403-c8a1cf7ef471"
+version = "0.1.0"
+authors = ["Roger Samsó"]
+
+[deps]
+DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+PySD = "d7e3e0f0-7a2b-4e3a-9c1d-5a6b8c9d0e1f"
+Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
+
+[sources]
+PySD = {path = ".."}
+
+[compat]
+DimensionalData = "0.30"
+HTTP = "1.10"
+JSON3 = "1.14"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

@@ -81,7 +81,7 @@ export PythonMath,
 # the DSL (src/dsl).  The functions for equations (smooth, sum_over, …) are
 # found by @equations without being exported; new stateful operators extend
 # PySD.nstates, PySD.initial_states, PySD.rates! and PySD.output.
-export @equations, EquationSet, Model, run_model, Results, StatefulOperator, excel, check_units,
+export @equations, EquationSet, Model, run_model, Results, StatefulOperator, excel, check_units, variables,
        series_file, @precompile_model, @u_str, NoUnits, PySDUnits
 
 include("libm.jl")
@@ -105,6 +105,7 @@ include("dsl/numerics.jl")
 include("dsl/codegen.jl")
 include("dsl/run.jl")
 include("dsl/tables.jl")
+include("dsl/variables.jl")
 include("dsl/units_check.jl")
 include("dsl/latex.jl")
 

@@ -67,6 +67,67 @@ end
     end
 end
 
+@testset "DSL: the names as a table (variables)" begin
+    mod = _module()
+    Core.eval(mod, :(const d = $(Dim{:d}([:a, :b]))))
+    m = Core.eval(mod, quote
+        Model(@equations(title = "SOCIETY-Rates", begin
+            @parameters begin
+                k = 0.5, [unit = u"1/s", description = "A rate.", title = "Rate (k)",
+                          limits = (0, 1, 0.01)]
+                w[d] = [1.0, 2.0], [unit = NoUnits]
+                k_lookup = 2.0, [unit = NoUnits, description = "Added.", helper = true]
+            end
+            @variables begin
+                x(t)[d], [unit = u"m", limits = (0, Inf)]
+                flow(t)[d], [unit = u"m/s"]
+            end
+            ∂t(x) ~ flow
+            x(t₀) ~ w
+            flow ~ k * k_lookup * x
+        end); time = 0:1:2, time_unit = u"s")
+    end)
+    t = variables(m)
+    @test Tables.istable(t)
+    @test t.name == [:flow, :k, :w, :x]                          # no helper
+    i = findfirst(==(:k), t.name)
+    @test (t.title[i], t.set[i], t.kind[i], t.unit[i], t.description[i], t.limits[i]) ==
+          ("Rate (k)", "SOCIETY-Rates", :parameter, "1/s", "A rate.", (0.0, 1.0, 0.01))
+    j = findfirst(==(:x), t.name)
+    @test (t.title[j], t.set[j], t.kind[j], t.unit[j], t.description[j]) == ("x", "SOCIETY-Rates", :stock, "m", "")
+    @test t.limits[j] == (0.0, Inf) && t.dims[j] == (:d,) && t.elements[j] == (["a", "b"],)
+    @test t.unit[findfirst(==(:w), t.name)] == "" && t.dims[1] == (:d,)
+    @test :k_lookup in variables(m; helpers = true).name
+    # a component's names, and its name as the set's title
+    bmod = _module()
+    Base.include(bmod, joinpath(@__DIR__, "dsl", "beer_game.jl"))
+    bt = variables(Base.invokelatest(bmod.beer_game))
+    r = findfirst(==(Symbol("retailer.inventory")), bt.name)
+    @test bt.set[r] == "retailer" && bt.kind[r] === :stock
+    # a name and metadata together; anything but key = value after a name is a mistake
+    named = Core.eval(mod, :(@equations :shop title = "The shop" begin
+        @parameters begin
+            p = 1, [unit = NoUnits]
+        end
+    end))
+    @test named.name === :shop && named.metadata == Dict{Symbol,Any}(:title => "The shop")
+    err = try
+        Core.eval(mod, :(@equations :shop other begin end))
+    catch e
+        e isa LoadError ? e.error : e
+    end
+    @test err isa ArgumentError && occursin("not `other`", err.msg)
+    # limits are checked
+    bad = Core.eval(mod, quote
+        Model(@equations(begin
+            @parameters begin
+                k = 1, [unit = NoUnits, limits = (0, "a")]
+            end
+        end); time = 0:1:2, time_unit = u"s")
+    end)
+    @test_throws ArgumentError variables(bad)
+end
+
 @testset "DSL: components, connections, dispatch" begin
     mod = _module()
     Base.include(mod, joinpath(@__DIR__, "dsl", "beer_game.jl"))

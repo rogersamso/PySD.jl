@@ -40,7 +40,28 @@ After the unit, optionally:
 - `nonnegative = true`, for a stock that can't go below zero: its outflow is
   cut to what empties it in one step of Δt;
 - `input = true`, `output = true`, for the variables a component takes from
-  and gives to the rest of the model ([Components](@ref)).
+  and gives to the rest of the model ([Components](@ref));
+- `title = "…"`, the name to show in tables and interfaces (a translated
+  model's name as written in Vensim);
+- `limits = (min, max)` or `(min, max, step)`, the values that make sense
+  (`Inf` for no bound), for sliders and checks;
+- any other `key = value`: kept, for whatever reads the model.
+
+A set of equations can have metadata of its own, before its block:
+
+```julia
+climate = @equations title = "Climate: temperature" begin
+    …
+end
+```
+
+[`variables`](@ref) lists the names of a model as a table, read from their
+declarations: title, set, kind, unit, description, limits and dimensions.
+
+```julia
+using DataFrames
+DataFrame(variables(m))
+```
 
 Names without a unit are `NoUnits`.  Units are
 [Unitful.jl](https://github.com/PainterQubits/Unitful.jl)'s (`u"kg/yr"`), and
