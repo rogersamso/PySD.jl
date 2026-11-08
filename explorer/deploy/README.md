@@ -14,6 +14,21 @@ started together with Docker Compose.
 
 The explorer itself isn't reachable from outside: only Caddy talks to it.
 
+| container | image | |
+|---|---|---|
+| explorer | built here from `Dockerfile` (`julia:1.12` + PySD.jl, the explorer, DimensionalData, Unitful, precompiled; about 2.4 GB) | runs as the user `explorer`, not root |
+| caddy | `caddy:2.10`, as published | ports 80 and 443 |
+
+| where | what |
+|---|---|
+| this repository | the code, and `.env` (the settings); copied into the image when built, so an update needs `--build` |
+| `MODEL_DIR` | the model and its Excel files, mounted read-only at `/model` |
+| volume `deploy_explorer-data` (`/data`) | users, sessions, limits, runs, analyses, uploads, saved views (see the manual's "The data folder") |
+| volume `deploy_caddy-data` | Caddy's certificates |
+
+The volumes stay through restarts, rebuilds and updates;
+`docker compose down -v` deletes them.
+
 ## What you need
 
 - A server with Docker.  For a large model: 4 cores and 8 GB of memory (the
@@ -89,8 +104,9 @@ Each user sees the base run, their own runs and analyses, and those others
 shared.  Only the author (and administrators) can rename, share or delete a
 run.  A run or an analysis waits in a queue until one of the simulation slots
 (Admin: "Simulations at once") is free.  Saved runs are limited per user
-(about 14 MB each for a large model); sensitivity analyses keep only their
-table, with their own limits (how many, how many parameters each).
+(about 15 MB each for a large model); sensitivity analyses keep only their
+table, with their own limits (how many, how many parameters each).  The
+limits, their defaults and where they're kept are in the manual's "Limits".
 
 ## Safety
 
