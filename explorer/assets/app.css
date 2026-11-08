@@ -105,6 +105,12 @@ main { flex: 1; overflow: auto; padding: 12px 16px; min-width: 0; }
 .elements { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--text-secondary);
   margin-top: 4px; max-height: 66px; overflow: auto; }
 .elements label { display: inline-flex; gap: 4px; align-items: center; }
+.elements.by-dim { display: block; max-height: 150px; }
+.dim-row { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 2px 0; }
+.dim-row + .dim-row { border-top: 1px solid var(--grid); }
+.dim-name { min-width: 7em; color: var(--text-primary); }
+.dim-sum { font-weight: 600; }
+.dim-els { display: contents; }
 .plot { height: 300px; }
 /* the plots take the screen's height: more with fewer columns */
 .panels.cols-1 .plot { height: calc(100vh - 300px); min-height: 420px; }

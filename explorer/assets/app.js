@@ -355,6 +355,7 @@ async function renderPanels() {
     if (token !== renderToken) return;
     const node = box.querySelector(`[data-name="${CSS.escape(p.name)}"]`);
     if (!node) continue;
+    initDims(p);
     if (p.elements === null) p.elements = s.elements.slice(0, Math.min(s.elements.length, 4));
     renderElements(node, p, s);
     const fig = figure(p, s, theme());
@@ -382,9 +383,61 @@ function panelNode(p) {
     el("div", { class: "plot" }));
 }
 
+// An array of 2 dimensions or more: a row per dimension (its elements to show,
+// or to add up), the lines all the combinations.  p.dims = [{ pick: [...], sum }].
+function dimsOf(name) {
+  const v = S.byName.get(name);
+  return v && v.elements && v.elements.length >= 2 ? v.elements : null;
+}
+function initDims(p) {
+  const ds = dimsOf(p.name);
+  if (!ds) { p.dims = null; return; }
+  if (p.dims && p.dims.length === ds.length) return;
+  if (p.elements && p.elements.length) {          // (from a saved view: the elements it had)
+    const parts = p.elements.map((e) => e.split(","));
+    p.dims = ds.map((es, k) => ({ pick: es.filter((e) => parts.some((q) => q[k] === e)), sum: false }));
+  } else {                                        // the first of each, and the last dimension whole (if short)
+    p.dims = ds.map((es, k) => ({ pick: k === ds.length - 1 ? es.slice(0, Math.min(es.length, 8)) : es.slice(0, 1), sum: false }));
+  }
+  p.elements = dimsElements(p);
+}
+// the elements the rows pick (not those added up)
+function dimsElements(p) {
+  const ds = dimsOf(p.name);
+  return cartesian(ds.map((es, k) => p.dims[k].pick));
+}
 function renderElements(node, p, s) {
   const box = $(".elements", node);
   if (s.elements.length <= 1 && s.elements[0] === "") { box.replaceChildren(); return; }
+  const v = S.byName.get(p.name);
+  const ds = dimsOf(p.name);
+  if (ds && p.dims) {
+    box.classList.add("by-dim");
+    const changed = () => { p.elements = dimsElements(p); renderPanels(); };
+    const rows = ds.map((es, k) => {
+      const d = p.dims[k];
+      const name = (v.dims && v.dims[k]) || `dimension ${k + 1}`;
+      return el("div", { class: "dim-row" },
+        el("b", { class: "dim-name", title: name }, name),
+        el("button", { type: "button", class: "link", title: "All its elements", onclick: () => { d.pick = es.slice(); changed(); } }, "all"),
+        el("button", { type: "button", class: "link", title: "None", onclick: () => { d.pick = []; changed(); } }, "none"),
+        el("label", { class: "dim-sum", title: `Add up the ticked ${name} (one line instead of one each)` },
+          el("input", { type: "checkbox", checked: d.sum, onchange: (ev) => { d.sum = ev.target.checked; changed(); } }), "Σ add up"),
+        el("span", { class: "dim-els" }, ...es.map((e) => el("label", {},
+          el("input", { type: "checkbox", checked: d.pick.includes(e), onchange: (ev) => {
+            d.pick = ev.target.checked ? es.filter((x) => x === e || d.pick.includes(x)) : d.pick.filter((x) => x !== e);
+            changed();
+          } }), e))));
+    });
+    const n = ds.reduce((a, es, k) => a * (p.dims[k].sum ? 1 : p.dims[k].pick.length), 1);
+    const sum = el("label", { title: "The sum of all its elements" },
+      el("input", { type: "checkbox", checked: p.sum, onchange: (ev) => { p.sum = ev.target.checked; renderPanels(); } }),
+      el("b", {}, "Σ all"));
+    box.replaceChildren(...rows, el("div", { class: "dim-row" }, sum,
+      el("span", { class: "note" }, `${n} line${n === 1 ? "" : "s"} per run` + (n > 40 ? ": a lot to read; add some up (Σ) or pick fewer" : ""))));
+    return;
+  }
+  box.classList.remove("by-dim");
   const boxes = s.elements.map((e) => el("label", {},
     el("input", { type: "checkbox", checked: p.elements.includes(e), onchange: (ev) => {
       p.elements = ev.target.checked ? p.elements.concat([e]) : p.elements.filter((x) => x !== e);
@@ -393,20 +446,40 @@ function renderElements(node, p, s) {
   const sum = el("label", { title: "The sum of all its elements" },
     el("input", { type: "checkbox", checked: p.sum, onchange: (ev) => { p.sum = ev.target.checked; renderPanels(); } }),
     el("b", {}, "Σ all"));
-  box.replaceChildren(sum, ...boxes);
+  const all = el("button", { type: "button", class: "link", onclick: () => { p.elements = s.elements.slice(); renderPanels(); } }, "all");
+  const none = el("button", { type: "button", class: "link", onclick: () => { p.elements = []; renderPanels(); } }, "none");
+  box.replaceChildren(sum, all, none, ...boxes);
 }
 
 // the traces of a panel: runs × elements, in values or against the baseline
 function traces(p, s) {
   const mode = $("#mode").value, base = $("#baseline").value;
   const scalar = s.elements.length === 1 && s.elements[0] === "";
-  const picked = scalar ? [""] : p.elements.slice();
-  if (p.sum && !scalar) picked.push("Σ");
+  // each line: its label and the elements it adds up (one, unless some dimensions are added up)
+  let lines;
+  const ds = scalar ? null : dimsOf(p.name);
+  if (ds && p.dims && p.dims.length === ds.length) {
+    const v = S.byName.get(p.name);
+    const shown = ds.map((es, k) => p.dims[k].sum ? [null] : p.dims[k].pick);
+    lines = product(shown).map((combo) => {
+      const parts = combo.map((e, k) => e !== null ? [e] : p.dims[k].pick);
+      const label = combo.map((e, k) => e !== null ? e :
+        `Σ ${p.dims[k].pick.length === ds[k].length ? "" : p.dims[k].pick.length + " "}${(v.dims && v.dims[k]) || "dim " + (k + 1)}`).join(",");
+      return { label, cols: cartesian(parts).map((c) => s.elements.indexOf(c)).filter((j) => j >= 0) };
+    }).filter((l) => l.cols.length);
+  } else {
+    lines = (scalar ? [""] : p.elements).map((e) => ({ label: e, cols: [s.elements.indexOf(e)].filter((j) => j >= 0) }));
+  }
+  if (p.sum && !scalar) lines.push({ label: "Σ", cols: s.elements.map((_, j) => j) });
+  const picked = lines.map((l) => l.label);
+  const byLabel = new Map(lines.map((l) => [l.label, l.cols]));
   const pick = (runId, e) => {
     const r = s.runs[runId];
     if (!r) return null;
-    if (e === "Σ") return s.time.map((_, i) => r.reduce((a, col) => (col[i] === null || a === null ? null : a + col[i]), 0));
-    return r[s.elements.indexOf(e)] || null;
+    const cols = byLabel.get(e) || [];
+    if (!cols.length) return null;
+    if (cols.length === 1) return r[cols[0]] || null;
+    return s.time.map((_, i) => cols.reduce((a, j) => (a === null || !r[j] || r[j][i] === null ? null : a + r[j][i]), 0));
   };
   const out = [];
   for (const id of S.shown) {
@@ -587,11 +660,11 @@ async function exportHTML() {
 
 // ---------------------------------------------------------------- saved views
 function currentView(name) {
-  return { name, panels: S.panels.map((p) => ({ name: p.name, elements: p.elements, sum: p.sum })),
+  return { name, panels: S.panels.map((p) => ({ name: p.name, elements: p.elements, sum: p.sum, dims: p.dims || null })),
     runs: S.shown.slice(), mode: $("#mode").value, baseline: $("#baseline").value, columns: $("#columns").value };
 }
 async function applyView(v) {
-  S.panels = (v.panels || []).filter((p) => S.byName.has(p.name)).map((p) => ({ name: p.name, elements: p.elements || null, sum: !!p.sum }));
+  S.panels = (v.panels || []).filter((p) => S.byName.has(p.name)).map((p) => ({ name: p.name, elements: p.elements || null, sum: !!p.sum, dims: p.dims || null }));
   for (const id of S.shown.slice()) toggleRun(id, false);
   for (const id of v.runs || []) if (runById(id)) toggleRun(id, true);
   if (!S.shown.length && S.runs.length) toggleRun(S.runs[0].id, true);
@@ -755,11 +828,13 @@ function paramRow(v) {
   }
   return row;
 }
-function cartesian(elements) {
+// every combination of one element of each, as lists ("product") or labels ("a,b")
+function product(elements) {
   let out = [[]];
   for (const es of elements) out = out.flatMap((pre) => es.map((e) => pre.concat([e])));
-  return out.map((x) => x.join(","));
+  return out;
 }
+function cartesian(elements) { return product(elements).map((x) => x.join(",")); }
 
 function renderChanged() {
   const box = $("#changed");
