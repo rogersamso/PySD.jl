@@ -230,46 +230,36 @@ A run or an analysis waits for a simulation slot: `POST` answers its job,
 
 ### An example
 
-A run with a parameter and a table changed, its results as CSV, in Python:
-
-```python
-import requests, time
-
-api = "https://myexplorer.duckdns.org/api/"
-s = requests.Session()
-s.headers["X-PySD-Request"] = "1"
-s.post(api + "login", json={"user": "laia", "password": "…"}).raise_for_status()
-
-t = s.get(api + "tables/p_power").json()                 # a table of the model
-k = t["elements"].index("solar_pv")
-y = t["y"]
-y[k] = [v * 1.2 if x >= 2030 else v for x, v in zip(t["x"][k], y[k])]
-
-job = s.post(api + "runs", json={"label": "Solar +20 % from 2030",
-                                 "params": {"p_power": y, "tax": 30}}).json()
-while job["status"] in ("queued", "running"):
-    time.sleep(2)
-    job = s.get(api + "jobs/" + job["id"]).json()
-assert job["status"] == "done", job["message"]
-open("solar.csv", "w").write(s.get(api + f"runs/{job['result']}/csv").text)
-```
-
-And in Julia:
+A run with a parameter and a table changed, then its results as CSV, with
+HTTP.jl (which keeps the login's cookie) and JSON3:
 
 ```julia
 using HTTP, JSON3
-api = "https://myexplorer.duckdns.org/api/"
-h = ["X-PySD-Request" => "1", "Content-Type" => "application/json"]
-call(method, path, body = nothing) =
-    JSON3.read(HTTP.request(method, api * path, h, body === nothing ? "" : JSON3.write(body)).body)
 
-call("POST", "login", (; user = "laia", password = "…"))     # HTTP.jl keeps the cookie
-job = call("POST", "runs", (; label = "Tax 30", params = (; tax = 30)))
-while job.status in ("queued", "running")
-    sleep(2)
-    global job = call("GET", "jobs/" * job.id)
+const api = "https://myexplorer.duckdns.org/api/"
+const headers = ["X-PySD-Request" => "1", "Content-Type" => "application/json"]
+call(method, path, body = nothing) =
+    JSON3.read(HTTP.request(method, api * path, headers, body === nothing ? "" : JSON3.write(body)).body)
+
+call("POST", "login", (; user = "laia", password = "…"))
+
+# a table of the model: solar PV's values 20 % higher from 2030
+t = call("GET", "tables/p_power")
+k = findfirst(==("solar_pv"), t.elements)
+y = [collect(Float64, v) for v in t.y]
+y[k] = [x >= 2030 ? v * 1.2 : v for (x, v) in zip(t.x[k], y[k])]
+
+function finished(job)
+    while job.status in ("queued", "running")
+        sleep(2)
+        job = call("GET", "jobs/" * job.id)
+    end
+    job.status == "done" || error("the run didn't end: ", job.message)
+    return job
 end
-write("tax.csv", HTTP.get(api * "runs/$(job.result)/csv").body)
+
+job = finished(call("POST", "runs", (; label = "Solar +20 % from 2030", params = (; p_power = y, tax = 30))))
+write("solar.csv", HTTP.get(api * "runs/$(job.result)/csv").body)
 ```
 
 ## Safety
