@@ -1,1 +1,3 @@
 Manifest.toml
+deploy/.env
+deploy/users.caddy

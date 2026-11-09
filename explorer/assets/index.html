@@ -15,8 +15,11 @@
     <button role="tab" data-tab="runs">Runs</button>
     <button role="tab" data-tab="sensitivity" id="tab-sens" hidden>Sensitivity</button>
     <button role="tab" data-tab="code" id="tab-code" hidden>Code</button>
+    <button role="tab" data-tab="admin" id="tab-admin" hidden>Admin</button>
   </nav>
   <span id="status" class="status"></span>
+  <span id="who" class="who"></span>
+  <button id="account" class="ghost" hidden></button>
   <button id="theme" class="ghost" title="Light or dark">Theme</button>
 </header>
 
@@ -77,6 +80,18 @@
           <h2>New run</h2>
           <label class="block">Name <input id="run-label" type="text" placeholder="e.g. High climate sensitivity"></label>
           <div id="inputs-box"></div>
+          <details id="uploads-box" class="uploads static-hide">
+            <summary>Upload your own version of a sheet's file</summary>
+            <p class="note">A copy of one of the model's Excel files with other values (another scenario, other data):
+              its sheets can then replace the model's in your runs. Only you see it until you share it. <span id="upload-limits"></span></p>
+            <form id="upload-form" class="upload-form">
+              <label class="block">It replaces <select id="upload-replaces"></select></label>
+              <label class="block">Name <input id="upload-label" placeholder="e.g. High ambition 2030"></label>
+              <label class="block">File <input id="upload-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label>
+              <div class="row end"><button class="primary" id="upload-go">Upload</button></div>
+            </form>
+            <div id="upload-list"></div>
+          </details>
           <h3>Parameters <small id="changed-count"></small></h3>
           <div id="changed" class="changed"></div>
           <input id="param-search" type="search" placeholder="Find a parameter…" autocomplete="off">
@@ -87,8 +102,9 @@
           </div>
         </div>
         <div class="card">
-          <h2>Runs</h2>
-          <table id="runs-table" class="table"><thead><tr><th></th><th>Name</th><th>Made</th><th>Changes</th><th></th></tr></thead><tbody></tbody></table>
+          <h2>Runs <small id="runs-quota"></small></h2>
+          <div id="jobs" class="jobs"></div>
+          <table id="runs-table" class="table"><thead><tr><th></th><th>Name</th><th>By</th><th>Made</th><th>Changes</th><th></th></tr></thead><tbody></tbody></table>
         </div>
       </div>
     </section>
@@ -110,6 +126,13 @@
 
     <section id="sensitivity" class="tab">
       <div class="row" style="margin-bottom:8px">
+        <label>Analysis <select id="sens-pick"></select></label>
+        <span id="sens-meta" class="note"></span>
+        <button id="sens-share" class="static-hide" hidden>Share</button>
+        <button id="sens-rename" class="ghost static-hide" hidden>Rename</button>
+        <button id="sens-delete" class="ghost static-hide" hidden>Delete</button>
+      </div>
+      <div class="row" style="margin-bottom:8px">
         <label>Result <select id="sens-output"></select></label>
         <label>Show <select id="sens-top"><option>15</option><option selected>25</option><option>50</option></select> parameters</label>
         <label class="check"><input type="checkbox" id="sens-years"> include year parameters</label>
@@ -118,10 +141,98 @@
       </div>
       <p class="note" id="sens-note"></p>
       <div id="sens-chart" class="sens-chart"></div>
+      <div class="card static-hide" id="new-analysis" style="margin-top:16px">
+        <h2>New sensitivity analysis</h2>
+        <p class="note">Each parameter is changed in turn by the step below, the others as in the run you start from;
+          the table keeps the % each result changes at the end of the run for 1 % of change (its elasticity).
+          It keeps no runs: it doesn't count in your runs. <span id="an-limits"></span></p>
+        <div class="an-grid">
+          <div>
+            <label class="block">Name <input id="an-label" type="text" placeholder="e.g. Climate parameters"></label>
+            <label class="block">Start from <select id="an-around"></select></label>
+            <label class="block">Step (%) <input id="an-step" type="number" value="1" step="any" min="0.01" max="50"></label>
+            <label class="check"><input type="checkbox" id="an-years"> also year parameters (+step % of a year makes little sense)</label>
+            <h3>Results <small id="an-out-count"></small></h3>
+            <input id="an-out-search" type="search" placeholder="Find a stock or variable…" autocomplete="off">
+            <div id="an-outputs" class="pick-list"></div>
+          </div>
+          <div>
+            <h3>Parameters <small id="an-par-count"></small></h3>
+            <div class="row">
+              <input id="an-par-search" type="search" placeholder="Find parameters…" autocomplete="off" style="flex:1">
+              <button id="an-par-all">Pick all found</button>
+              <button id="an-par-none" class="ghost">None</button>
+            </div>
+            <div id="an-params" class="pick-list tall"></div>
+          </div>
+        </div>
+        <div class="row end"><button id="an-start" class="primary">Start the analysis</button></div>
+      </div>
+    </section>
+
+    <section id="admin" class="tab">
+      <div class="runs-grid">
+        <div class="card">
+          <h2>Limits</h2>
+          <div id="admin-settings"></div>
+          <div class="row end"><button id="admin-save" class="primary">Save</button></div>
+          <p class="note" id="admin-threads"></p>
+        </div>
+        <div class="card">
+          <h2>Users</h2>
+          <div id="admin-accounts" hidden>
+            <table id="admin-logins" class="table"><thead><tr><th>User</th><th>Admin</th><th>Last login</th><th>Runs</th><th></th></tr></thead><tbody></tbody></table>
+            <form id="new-user" class="row" style="margin-top:10px">
+              <input id="new-user-name" placeholder="new user's name" pattern="[A-Za-z0-9_.@\-]{1,64}" required>
+              <label class="check"><input type="checkbox" id="new-user-admin"> admin</label>
+              <button class="primary">Add user</button>
+            </form>
+            <h3>Disk</h3>
+          </div>
+          <table id="admin-users" class="table"><thead><tr><th>User</th><th>Runs</th><th>Shared</th><th>Analyses</th><th>Disk</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2>Jobs <small>(the last hour)</small></h2>
+        <table id="admin-jobs" class="table"><thead><tr><th>User</th><th>What</th><th>Status</th><th>Queued</th><th>Started</th><th>Ended</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
     </section>
   </main>
 </div>
 <div id="toast" class="toast" hidden></div>
+
+<div id="login" class="login" hidden>
+  <form id="login-form" class="card login-card">
+    <h1 id="login-title">PySD Explorer</h1>
+    <label class="block">User <input id="login-user" autocomplete="username" required></label>
+    <label class="block">Password <input id="login-password" type="password" autocomplete="current-password" required></label>
+    <p id="login-error" class="error" hidden></p>
+    <div class="row end"><button class="primary" id="login-go">Log in</button></div>
+  </form>
+</div>
+
+<div id="account-menu" class="menu" hidden>
+  <button id="menu-password" class="ghost">Change my password</button>
+  <button id="menu-logout" class="ghost">Log out</button>
+</div>
+
+<dialog id="dlg-password">
+  <form method="dialog" id="password-form">
+    <h2>Change my password</h2>
+    <label class="block">Current password <input id="pw-current" type="password" autocomplete="current-password" required></label>
+    <label class="block">New password (at least 10 characters) <input id="pw-new" type="password" autocomplete="new-password" minlength="10" required></label>
+    <label class="block">New password again <input id="pw-again" type="password" autocomplete="new-password" minlength="10" required></label>
+    <p id="pw-error" class="error" hidden></p>
+    <div class="row end"><button value="cancel" formnovalidate class="ghost">Cancel</button><button id="pw-go" class="primary" value="default">Change it</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlg-secret">
+  <h2 id="secret-title"></h2>
+  <p>Give this password to them privately. <b>It isn't shown again</b>; they can change it once logged in.</p>
+  <div class="row"><code id="secret-value" class="secret"></code><button id="secret-copy">Copy</button></div>
+  <div class="row end"><button id="secret-close" class="primary">Done</button></div>
+</dialog>
 <script src="vendor/plotly.min.js"></script>
 <script src="app.js"></script>
 </body>

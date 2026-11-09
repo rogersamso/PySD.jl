@@ -26,6 +26,7 @@ makedocs(;
             "Solvers and the model's ticks" => "solvers.md",
             "Sensitivity and derivatives" => "sensitivity.md",
             "Models as packages" => "packages.md",
+            "Exploring a model in the browser" => "explorer.md",
         ],
         "Vensim functions" => "functions.md",
         "Reference" => "api.md",

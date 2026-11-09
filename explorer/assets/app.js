@@ -17,16 +17,18 @@ const S = {
   model: null, byName: new Map(), runs: [], shown: [], slot: new Map(),
   panels: [], cache: new Map(), edits: new Map(), inputs: {}, views: [], sens: null,
   code: [], codeText: new Map(), codeFile: null,
+  me: { user: "", admin: false, code: false, local: true, limits: {} }, analyses: [], jobs: [],
+  anParams: new Set(), anOutputs: new Set(), adminTimer: null, jobsTimer: null, uploads: [], uploadFiles: [],
 };
 
 // ---------------------------------------------------------------- data access
 async function api(method, path, body) {
   if (STATIC) return staticApi(method, path);
-  const r = await fetch("api/" + path, {
-    method, headers: body ? { "Content-Type": "application/json" } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const headers = { "X-PySD-Request": "1" };          // (the server refuses changes without it)
+  if (body) headers["Content-Type"] = "application/json";
+  const r = await fetch("api/" + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && j.login) { showLogin(); throw new Error("Log in first."); }
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
@@ -35,10 +37,14 @@ function staticApi(method, path) {
   const [p, q] = path.split("?");
   if (p === "model") return STATIC.model;
   if (p === "runs") return STATIC.runs;
-  if (p === "sensitivity") return STATIC.sensitivity;
+  if (p === "me") return { ...(STATIC.me || {}), admin: false };
+  if (p === "jobs") return [];
+  if (p === "analyses") return (STATIC.analyses || []).map(({ rows, ...a }) => a);
+  if (p.startsWith("analyses/")) return (STATIC.analyses || []).find((a) => a.id === decodeURIComponent(p.slice(9)));
   if (p === "views") return STATIC.view ? [STATIC.view] : [];
   if (p === "code") return STATIC.code || [];
   if (p === "inputs") return STATIC.model.inputs;
+  if (p === "uploads") return { uploads: [], files: [] };
   if (p.startsWith("code/")) return { text: (STATIC.texts || {})[decodeURIComponent(p.slice(5))] || "" };
   if (p === "series") {
     const name = new URLSearchParams(q).get("name");
@@ -87,17 +93,23 @@ const fileName = (s) => s.replace(/[^\w\-]+/g, "_").replace(/^_|_$/g, "").slice(
 // ---------------------------------------------------------------- start
 async function start() {
   if (STATIC) document.body.classList.add("static");
+  try { S.me = await api("GET", "me"); } catch (e) { if (!$("#login").hidden) return; throw e; }
   S.model = await api("GET", "model");
   for (const v of S.model.names) S.byName.set(v.name, v);
   document.title = (S.model.title || "Model") + " · PySD Explorer";
   $("#title").textContent = S.model.title || "PySD Explorer";
   S.runs = await api("GET", "runs");
   S.views = await api("GET", "views");
-  if (S.model.sensitivity) {
-    $("#tab-sens").hidden = false;
-    S.sens = await api("GET", "sensitivity");
+  S.analyses = await api("GET", "analyses");
+  $("#who").textContent = S.me.local || STATIC || S.me.auth === "password" ? "" : S.me.user + (S.me.admin ? " (admin)" : "");
+  if (S.me.auth === "password" && !STATIC) {
+    $("#account").hidden = false;
+    $("#account").textContent = S.me.user + (S.me.admin ? " (admin)" : "") + " ▾";
   }
-  if (S.model.code) {
+  $("#tab-admin").hidden = !S.me.admin || !!STATIC;
+  $("#tab-sens").hidden = !!STATIC && !S.analyses.length;
+  if (S.analyses.length) S.sens = await api("GET", "analyses/" + encodeURIComponent(S.analyses[0].id));
+  if (S.me.code) {
     $("#tab-code").hidden = false;
     S.code = await api("GET", "code");
   }
@@ -105,7 +117,8 @@ async function start() {
   if (!S.shown.length && S.runs.length) toggleRun(S.runs[0].id, true);
   wire();
   renderTree(); renderRunChips(); renderBaseline(); renderViews(); renderRunsTable();
-  renderInputs(); renderParams(); renderChanged(); renderSens(); renderCodeList();
+  renderInputs(); renderParams(); renderChanged(); renderSensPick(); renderSens(); renderCodeList();
+  renderAnalysisForm(); refreshJobs(); refreshInputs();
   if (STATIC && STATIC.view) await applyView(STATIC.view);
   else await renderPanels();
   status(`${S.model.names.length} names · ${S.runs.length} runs${STATIC ? " · read-only copy" : ""}`);
@@ -129,10 +142,30 @@ function wire() {
   $("#export-svg").addEventListener("click", () => exportView("svg"));
   $("#export-csv").addEventListener("click", exportCSV);
   $("#export-html").addEventListener("click", exportHTML);
-  $("#param-search").addEventListener("input", debounce(renderParams, 150));
+  $("#param-search").addEventListener("input", debounce(() => { S.paramsAll = false; renderParams(); }, 150));
   $("#reset-all").addEventListener("click", () => { S.edits.clear(); S.inputs = {}; renderInputs(); renderParams(); renderChanged(); });
   $("#run").addEventListener("click", newRun);
+  splitters();
   $("#sens-output").addEventListener("change", renderSens);
+  $("#sens-pick").addEventListener("change", pickAnalysis);
+  $("#sens-share").addEventListener("click", () => changeAnalysis({ shared: !S.sens.shared }));
+  $("#sens-rename").addEventListener("click", () => { const l = prompt("New name:", S.sens.label); if (l) changeAnalysis({ label: l }); });
+  $("#sens-delete").addEventListener("click", deleteAnalysis);
+  $("#an-par-search").addEventListener("input", debounce(renderAnalysisParams, 150));
+  $("#an-out-search").addEventListener("input", debounce(renderAnalysisOutputs, 150));
+  $("#an-par-all").addEventListener("click", () => { for (const v of foundParams()) S.anParams.add(v.name); renderAnalysisParams(); });
+  $("#an-par-none").addEventListener("click", () => { S.anParams.clear(); renderAnalysisParams(); });
+  $("#an-start").addEventListener("click", startAnalysis);
+  $("#admin-save").addEventListener("click", saveSettings);
+  $("#account").addEventListener("click", (e) => { e.stopPropagation(); $("#account-menu").hidden = !$("#account-menu").hidden; });
+  document.addEventListener("click", () => ($("#account-menu").hidden = true));
+  $("#menu-logout").addEventListener("click", async () => { try { await api("POST", "logout"); } catch (e) {} location.reload(); });
+  $("#menu-password").addEventListener("click", () => { $("#pw-error").hidden = true; $("#password-form").reset(); $("#dlg-password").showModal(); });
+  $("#password-form").addEventListener("submit", changePassword);
+  $("#new-user").addEventListener("submit", addUser);
+  $("#upload-form").addEventListener("submit", uploadSheet);
+  $("#secret-copy").addEventListener("click", () => navigator.clipboard.writeText($("#secret-value").textContent).then(() => toast("Copied.")));
+  $("#secret-close").addEventListener("click", () => { $("#secret-value").textContent = ""; $("#dlg-secret").close(); });
   $("#sens-top").addEventListener("change", renderSens);
   $("#sens-years").addEventListener("change", renderSens);
   $("#sens-png").addEventListener("click", () => Plotly.downloadImage("sens-chart", { format: "png", scale: 2, filename: "sensitivity" }));
@@ -163,8 +196,10 @@ function debounce(f, ms) {
 function tab(name) {
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll("section.tab").forEach((s) => s.classList.toggle("active", s.id === name));
-  if (name === "sensitivity") renderSens();
-  if (name === "runs" && !STATIC) api("GET", "inputs").then((i) => { S.model.inputs = i; renderInputs(); }).catch(() => {});
+  if (name === "sensitivity") { renderSens(); renderAnalysisForm(); }
+  clearInterval(S.adminTimer);
+  if (name === "admin") { renderAdmin(); renderLogins(); S.adminTimer = setInterval(renderAdmin, 3000); }
+  if (name === "runs" && !STATIC) refreshInputs();
   if (name === "explore") document.querySelectorAll(".plot").forEach((p) => Plotly.Plots.resize(p));
 }
 
@@ -184,7 +219,11 @@ function restorePrefs() {
   } catch (e) { /* no storage: fine */ }
   setColumns();
 }
-function setColumns() { $("#panels").className = "panels cols-" + $("#columns").value; }
+// (Plotly keeps a plot's size until told: resize them once the grid has its new columns)
+function setColumns() {
+  $("#panels").className = "panels cols-" + $("#columns").value;
+  requestAnimationFrame(() => document.querySelectorAll("#panels .plot").forEach((p) => { if (p.data) Plotly.Plots.resize(p); }));
+}
 
 // ---------------------------------------------------------------- tree of sets
 function renderTree() {
@@ -256,7 +295,7 @@ function renderRunChips() {
     return el("span", {
       class: "chip" + (on ? "" : " off"), title: changesText(r) || "No changes",
       onclick: () => { toggleRun(r.id); renderRunChips(); renderBaseline(); renderRunsTable(); renderPanels(); },
-    }, el("span", { class: "dot", style: on ? `background:${runColor(r.id)}` : "" }), r.label);
+    }, el("span", { class: "dot", style: on ? `background:${runColor(r.id)}` : "" }), runLabel(r));
   }));
 }
 function renderBaseline() {
@@ -266,11 +305,16 @@ function renderBaseline() {
   sel.value = runById(keep) ? keep : (S.shown[0] || (S.runs[0] && S.runs[0].id) || "");
   sel.style.display = $("#mode").value === "values" ? "none" : "";
 }
+// a run's name, with its author's when it's someone else's
+const runLabel = (r) => r.owner && r.owner !== S.me.user ? `${r.label} · ${r.owner}` : r.label;
+const mayChange = (x) => S.me.admin || (x.owner && x.owner === S.me.user);
+
 function changesText(r, max = 99) {
   const out = [];
   for (const [k, v] of Object.entries(r.params || {})) {
     const m = S.byName.get(k);
-    out.push(`${m ? titleOf(m) : k} = ${Array.isArray(v) ? "[" + v.map(fmt).join(", ") + "]" : fmt(v)}`);
+    out.push(m && m.table ? `${titleOf(m)}: table changed` :
+      `${m ? titleOf(m) : k} = ${Array.isArray(v) ? "[" + v.map(fmt).join(", ") + "]" : fmt(v)}`);
   }
   for (const [k, v] of Object.entries(r.inputs || {})) {
     const c = (S.model.inputs[k] || []).find((c) => c.id === v);
@@ -299,7 +343,7 @@ async function series(name) {
     if (!c.time.length) { c.time = s.time; c.elements = s.elements; }
     S.cache.set(name, c);
   }
-  return c;
+  return c || { name, time: [], elements: [""], runs: {} };
 }
 
 let renderToken = 0;
@@ -317,6 +361,7 @@ async function renderPanels() {
     if (token !== renderToken) return;
     const node = box.querySelector(`[data-name="${CSS.escape(p.name)}"]`);
     if (!node) continue;
+    initDims(p);
     if (p.elements === null) p.elements = s.elements.slice(0, Math.min(s.elements.length, 4));
     renderElements(node, p, s);
     const fig = figure(p, s, theme());
@@ -344,9 +389,61 @@ function panelNode(p) {
     el("div", { class: "plot" }));
 }
 
+// An array of 2 dimensions or more: a row per dimension (its elements to show,
+// or to add up), the lines all the combinations.  p.dims = [{ pick: [...], sum }].
+function dimsOf(name) {
+  const v = S.byName.get(name);
+  return v && v.elements && v.elements.length >= 2 ? v.elements : null;
+}
+function initDims(p) {
+  const ds = dimsOf(p.name);
+  if (!ds) { p.dims = null; return; }
+  if (p.dims && p.dims.length === ds.length) return;
+  if (p.elements && p.elements.length) {          // (from a saved view: the elements it had)
+    const parts = p.elements.map((e) => e.split(","));
+    p.dims = ds.map((es, k) => ({ pick: es.filter((e) => parts.some((q) => q[k] === e)), sum: false }));
+  } else {                                        // the first of each, and the last dimension whole (if short)
+    p.dims = ds.map((es, k) => ({ pick: k === ds.length - 1 ? es.slice(0, Math.min(es.length, 8)) : es.slice(0, 1), sum: false }));
+  }
+  p.elements = dimsElements(p);
+}
+// the elements the rows pick (not those added up)
+function dimsElements(p) {
+  const ds = dimsOf(p.name);
+  return cartesian(ds.map((es, k) => p.dims[k].pick));
+}
 function renderElements(node, p, s) {
   const box = $(".elements", node);
   if (s.elements.length <= 1 && s.elements[0] === "") { box.replaceChildren(); return; }
+  const v = S.byName.get(p.name);
+  const ds = dimsOf(p.name);
+  if (ds && p.dims) {
+    box.classList.add("by-dim");
+    const changed = () => { p.elements = dimsElements(p); renderPanels(); };
+    const rows = ds.map((es, k) => {
+      const d = p.dims[k];
+      const name = (v.dims && v.dims[k]) || `dimension ${k + 1}`;
+      return el("div", { class: "dim-row" },
+        el("b", { class: "dim-name", title: name }, name),
+        el("button", { type: "button", class: "link", title: "All its elements", onclick: () => { d.pick = es.slice(); changed(); } }, "all"),
+        el("button", { type: "button", class: "link", title: "None", onclick: () => { d.pick = []; changed(); } }, "none"),
+        el("label", { class: "dim-sum", title: `Add up the ticked ${name} (one line instead of one each)` },
+          el("input", { type: "checkbox", checked: d.sum, onchange: (ev) => { d.sum = ev.target.checked; changed(); } }), "Σ add up"),
+        el("span", { class: "dim-els" }, ...es.map((e) => el("label", {},
+          el("input", { type: "checkbox", checked: d.pick.includes(e), onchange: (ev) => {
+            d.pick = ev.target.checked ? es.filter((x) => x === e || d.pick.includes(x)) : d.pick.filter((x) => x !== e);
+            changed();
+          } }), e))));
+    });
+    const n = ds.reduce((a, es, k) => a * (p.dims[k].sum ? 1 : p.dims[k].pick.length), 1);
+    const sum = el("label", { title: "The sum of all its elements" },
+      el("input", { type: "checkbox", checked: p.sum, onchange: (ev) => { p.sum = ev.target.checked; renderPanels(); } }),
+      el("b", {}, "Σ all"));
+    box.replaceChildren(...rows, el("div", { class: "dim-row" }, sum,
+      el("span", { class: "note" }, `${n} line${n === 1 ? "" : "s"} per run` + (n > 40 ? ": a lot to read; add some up (Σ) or pick fewer" : ""))));
+    return;
+  }
+  box.classList.remove("by-dim");
   const boxes = s.elements.map((e) => el("label", {},
     el("input", { type: "checkbox", checked: p.elements.includes(e), onchange: (ev) => {
       p.elements = ev.target.checked ? p.elements.concat([e]) : p.elements.filter((x) => x !== e);
@@ -355,20 +452,40 @@ function renderElements(node, p, s) {
   const sum = el("label", { title: "The sum of all its elements" },
     el("input", { type: "checkbox", checked: p.sum, onchange: (ev) => { p.sum = ev.target.checked; renderPanels(); } }),
     el("b", {}, "Σ all"));
-  box.replaceChildren(sum, ...boxes);
+  const all = el("button", { type: "button", class: "link", onclick: () => { p.elements = s.elements.slice(); renderPanels(); } }, "all");
+  const none = el("button", { type: "button", class: "link", onclick: () => { p.elements = []; renderPanels(); } }, "none");
+  box.replaceChildren(sum, all, none, ...boxes);
 }
 
 // the traces of a panel: runs × elements, in values or against the baseline
 function traces(p, s) {
   const mode = $("#mode").value, base = $("#baseline").value;
   const scalar = s.elements.length === 1 && s.elements[0] === "";
-  const picked = scalar ? [""] : p.elements.slice();
-  if (p.sum && !scalar) picked.push("Σ");
+  // each line: its label and the elements it adds up (one, unless some dimensions are added up)
+  let lines;
+  const ds = scalar ? null : dimsOf(p.name);
+  if (ds && p.dims && p.dims.length === ds.length) {
+    const v = S.byName.get(p.name);
+    const shown = ds.map((es, k) => p.dims[k].sum ? [null] : p.dims[k].pick);
+    lines = product(shown).map((combo) => {
+      const parts = combo.map((e, k) => e !== null ? [e] : p.dims[k].pick);
+      const label = combo.map((e, k) => e !== null ? e :
+        `Σ ${p.dims[k].pick.length === ds[k].length ? "" : p.dims[k].pick.length + " "}${(v.dims && v.dims[k]) || "dim " + (k + 1)}`).join(",");
+      return { label, cols: cartesian(parts).map((c) => s.elements.indexOf(c)).filter((j) => j >= 0) };
+    }).filter((l) => l.cols.length);
+  } else {
+    lines = (scalar ? [""] : p.elements).map((e) => ({ label: e, cols: [s.elements.indexOf(e)].filter((j) => j >= 0) }));
+  }
+  if (p.sum && !scalar) lines.push({ label: "Σ", cols: s.elements.map((_, j) => j) });
+  const picked = lines.map((l) => l.label);
+  const byLabel = new Map(lines.map((l) => [l.label, l.cols]));
   const pick = (runId, e) => {
     const r = s.runs[runId];
     if (!r) return null;
-    if (e === "Σ") return s.time.map((_, i) => r.reduce((a, col) => (col[i] === null || a === null ? null : a + col[i]), 0));
-    return r[s.elements.indexOf(e)] || null;
+    const cols = byLabel.get(e) || [];
+    if (!cols.length) return null;
+    if (cols.length === 1) return r[cols[0]] || null;
+    return s.time.map((_, i) => cols.reduce((a, j) => (a === null || !r[j] || r[j][i] === null ? null : a + r[j][i]), 0));
   };
   const out = [];
   for (const id of S.shown) {
@@ -539,7 +656,7 @@ async function exportHTML() {
   if (!S.panels.length) return toast("Pick the names to include first: the copy keeps the plotted names only.");
   status("Making the HTML copy…");
   try {
-    const r = await fetch("api/static", { method: "POST", headers: { "Content-Type": "application/json" },
+    const r = await fetch("api/static", { method: "POST", headers: { "Content-Type": "application/json", "X-PySD-Request": "1" },
       body: JSON.stringify({ runs: S.runs.map((r) => r.id), names: S.panels.map((p) => p.name), view: currentView("Exported view") }) });
     if (!r.ok) throw new Error((await r.json()).error);
     download(fileName(S.model.title || "model") + "-explorer.html", await r.blob());
@@ -549,11 +666,11 @@ async function exportHTML() {
 
 // ---------------------------------------------------------------- saved views
 function currentView(name) {
-  return { name, panels: S.panels.map((p) => ({ name: p.name, elements: p.elements, sum: p.sum })),
+  return { name, panels: S.panels.map((p) => ({ name: p.name, elements: p.elements, sum: p.sum, dims: p.dims || null })),
     runs: S.shown.slice(), mode: $("#mode").value, baseline: $("#baseline").value, columns: $("#columns").value };
 }
 async function applyView(v) {
-  S.panels = (v.panels || []).filter((p) => S.byName.has(p.name)).map((p) => ({ name: p.name, elements: p.elements || null, sum: !!p.sum }));
+  S.panels = (v.panels || []).filter((p) => S.byName.has(p.name)).map((p) => ({ name: p.name, elements: p.elements || null, sum: !!p.sum, dims: p.dims || null }));
   for (const id of S.shown.slice()) toggleRun(id, false);
   for (const id of v.runs || []) if (runById(id)) toggleRun(id, true);
   if (!S.shown.length && S.runs.length) toggleRun(S.runs[0].id, true);
@@ -585,20 +702,34 @@ async function deleteView() {
 // ---------------------------------------------------------------- runs tab
 function renderRunsTable() {
   const tb = $("#runs-table tbody");
+  const mine = S.runs.filter((r) => r.owner === S.me.user).length;
+  $("#runs-quota").textContent = S.me.local || STATIC ? "" :
+    (S.me.admin ? `yours: ${mine}` : `yours: ${mine} of ${S.me.limits.max_runs_per_user}`);
   tb.replaceChildren(...S.runs.slice().reverse().map((r) => {
     const on = S.shown.includes(r.id);
+    const own = mayChange(r);
     return el("tr", {},
       el("td", {}, el("input", { type: "checkbox", checked: on, title: "Show in Explore",
         onchange: () => { toggleRun(r.id); renderRunChips(); renderBaseline(); renderRunsTable(); renderPanels(); } })),
       el("td", {}, el("span", { class: "badge", style: on ? `background:${runColor(r.id)};width:10px;height:10px;border-radius:50%;margin-right:6px` : "display:none" }),
         el("b", {}, r.label), el("br"), el("small", {}, r.seconds ? `${r.seconds} s` : "")),
+      el("td", {}, el("small", {}, r.owner ? r.owner : "everyone"), el("br"),
+        el("small", {}, r.owner === "" ? "" : r.shared ? "shared" : "private")),
       el("td", {}, el("small", {}, r.created)),
       el("td", { class: "changes" }, changesText(r) || "—"),
       el("td", { class: "static-hide" },
         el("button", { class: "ghost", title: "Start a new run from this one's changes", onclick: () => editFrom(r) }, "Edit copy"),
-        el("button", { class: "ghost", title: "Rename", onclick: () => renameRun(r) }, "Rename"),
-        el("button", { class: "ghost", title: "Delete", onclick: () => deleteRun(r) }, "✕")));
+        el("a", { class: "button ghost", href: "api/runs/" + encodeURIComponent(r.id) + "/csv", download: "",
+          title: "All its results, a row per name (or element), a column per time" }, "CSV"),
+        own && r.owner !== "" ? el("button", { class: "ghost", title: r.shared ? "Only you will see it" : "Everyone will see it",
+          onclick: () => changeRun(r, { shared: !r.shared }) }, r.shared ? "Unshare" : "Share") : null,
+        own ? el("button", { class: "ghost", title: "Rename", onclick: () => renameRun(r) }, "Rename") : null,
+        own ? el("button", { class: "ghost", title: "Delete", onclick: () => deleteRun(r) }, "✕") : null));
   }));
+}
+async function changeRun(r, change) {
+  try { Object.assign(r, await api("PATCH", "runs/" + encodeURIComponent(r.id), change)); renderRunChips(); renderRunsTable(); }
+  catch (e) { toast(e.message); }
 }
 function editFrom(r) {
   S.edits = new Map(Object.entries(r.params || {}));
@@ -609,10 +740,8 @@ function editFrom(r) {
 async function renameRun(r) {
   const label = prompt("New name:", r.label);
   if (!label) return;
-  try {
-    const u = await api("PATCH", "runs/" + encodeURIComponent(r.id), { label });
-    Object.assign(r, u); renderRunChips(); renderBaseline(); renderRunsTable(); renderPanels();
-  } catch (e) { toast(e.message); }
+  await changeRun(r, { label });
+  renderBaseline(); renderPanels();
 }
 async function deleteRun(r) {
   if (!confirm(`Delete the run "${r.label}"? Its results are removed from disk.`)) return;
@@ -629,8 +758,17 @@ function renderInputs() {
   const box = $("#inputs-box");
   const entries = Object.entries(S.model.inputs).filter(([, cs]) => cs.length > 1);
   if (!entries.length) {
-    box.replaceChildren(el("p", { class: "note" }, `Input sheets: the model's own (${Object.keys(S.model.inputs).length}). ` +
-      "To choose other sheets, start the explorer with input_dirs = folders of .xlsx files."));
+    if (!STATIC && S.uploadFiles.length) {
+      box.replaceChildren(el("h3", {}, "Input sheets"), el("p", { class: "note" },
+        `The model reads ${Object.keys(S.model.inputs).length} Excel sheets; no other versions of them yet. ` +
+        "Upload one below to choose it here; single values from the sheets can also be changed one by one in Parameters."));
+      return;
+    }
+    const own = Object.keys(S.model.inputs).length;
+    box.replaceChildren(el("p", { class: "note" }, `Input sheets: the model reads ${own} Excel sheets, and there are no other versions of them yet. ` +
+      "Another version of a sheet (a different scenario, say) is a copy of its file with other values, named like it " +
+      "(scen_w_high.xlsx for scen_w.xlsx) and put in the explorer's input folder; it then appears here to choose from. " +
+      "Single values from the sheets can also be changed one by one below."));
     return;
   }
   box.replaceChildren(el("h3", {}, "Input sheets"), ...entries.map(([k, cs]) => el("label", { class: "block" }, show(k),
@@ -639,7 +777,7 @@ function renderInputs() {
 }
 
 function editableParams() {
-  return S.model.names.filter((v) => v.kind === "parameter" && v.value !== null && v.value !== undefined);
+  return S.model.names.filter((v) => v.kind === "parameter" && (v.table || (v.value !== null && v.value !== undefined)));
 }
 function renderParams() {
   const q = $("#param-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -650,14 +788,17 @@ function renderParams() {
     return q.every((w) => hay.includes(w.replace(/_/g, " ")));
   });
   const box = $("#param-list");
-  const more = list.length > 40;
-  list = list.slice(0, 40);
-  box.replaceChildren(...list.map(paramRow),
-    el("p", { class: "note" }, more ? `${all.length} parameters: showing the first 40 that match; type more to narrow.` :
-      (list.length ? "" : "No parameter matches.")));
+  const n = list.length, more = n > 40 && !S.paramsAll;
+  if (more) list = list.slice(0, 40);
+  const what = q.length ? `${n} of ${all.length} parameters match` : `${all.length} parameters`;
+  const note = more ? el("p", { class: "note" }, `${what}: showing the first 40. Type more to narrow (a module's name works), or `,
+      el("button", { type: "button", class: "link", onclick: () => { S.paramsAll = true; renderParams(); } }, `show all ${n}`), ".")
+    : el("p", { class: "note" }, n ? (n > 40 ? `${what}, all shown.` : "") : "No parameter matches.");
+  box.replaceChildren(...list.map(paramRow), note);
 }
 
 function paramRow(v) {
+  if (v.table) return tableRow(v);
   const changed = S.edits.has(v.name);
   const cur = changed ? S.edits.get(v.name) : v.value;
   const row = el("div", { class: "param" + (changed ? " changed-row" : ""), title: `${v.name}\n\n${v.description || ""}` },
@@ -696,18 +837,92 @@ function paramRow(v) {
   }
   return row;
 }
-function cartesian(elements) {
+// ---------------------------------------------------------------- tables
+// A lookup or data series: its values at each x (a table per element of an
+// array), changed over the same x.  S.edits holds a list of values per element.
+const TABLES = new Map();
+async function tableOf(name) {
+  if (!TABLES.has(name)) TABLES.set(name, await api("GET", "tables/" + encodeURIComponent(name)));
+  return TABLES.get(name);
+}
+const sameValues = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+function tableRow(v) {
+  const changed = S.edits.has(v.name);
+  const row = el("div", { class: "param" + (changed ? " changed-row" : ""), title: `${v.name}\n\n${v.description || ""}` },
+    el("div", { class: "name" }, el("span", { class: "t" }, titleOf(v)), el("span", { class: "u" }, v.unit)),
+    el("div", { class: "set" }, v.set));
+  const body = el("div", { class: "table-edit" });
+  const det = el("details", {}, el("summary", {}, "table" + (v.dims.length ? ` per ${v.dims.join(" × ")}` : "") + " — edit"), body);
+  det.addEventListener("toggle", async () => {
+    if (!det.open || body.childElementCount) return;
+    try { tableEditor(v, row, body, await tableOf(v.name)); } catch (e) { body.textContent = e.message; }
+  });
+  row.append(det);
+  return row;
+}
+
+function tableEditor(v, row, body, t) {
+  let ys = S.edits.has(v.name) ? S.edits.get(v.name).map((y) => y.slice()) : t.y.map((y) => y.slice());
+  let k = 0;
+  const save = () => {
+    const same = ys.every((y, i) => sameValues(y, t.y[i]));
+    if (same) S.edits.delete(v.name); else S.edits.set(v.name, ys.map((y) => y.slice()));
+    row.classList.toggle("changed-row", !same);
+    renderChanged();
+  };
+  const pick = t.elements.length > 1 ? el("select", { onchange: (e) => { k = +e.target.value; draw(); } },
+    ...t.elements.map((e, i) => el("option", { value: i }, e))) : null;
+  const from = el("input", { type: "number", step: "any", value: t.x[0][Math.floor(t.x[0].length / 2)] ?? "", style: "width:6em" });
+  const pct = el("input", { type: "number", step: "any", value: 10, style: "width:5em" });
+  const all = el("input", { type: "checkbox" });
+  const scale = () => {
+    const x0 = +from.value, f = 1 + (+pct.value) / 100;
+    for (const i of all.checked ? ys.keys() : [k]) ys[i] = ys[i].map((y, j) => t.x[i][j] >= x0 ? y * f : y);
+    save(); draw();
+  };
+  const reset = () => { for (const i of all.checked ? ys.keys() : [k]) ys[i] = t.y[i].slice(); save(); draw(); };
+  const plot = el("div", { class: "table-plot" });
+  const grid = el("div", { class: "table-grid" });
+  const draw = () => {
+    const th = { muted: css("--text-muted"), accent: css("--accent"), text: css("--text-secondary"), grid: css("--grid") };
+    Plotly.react(plot, [
+      { x: t.x[k], y: t.y[k], name: "model", mode: "lines", line: { color: th.muted, dash: "dot", width: 2 } },
+      { x: t.x[k], y: ys[k], name: "this run", mode: "lines+markers", line: { color: th.accent, width: 2 }, marker: { size: 5 } }],
+      { margin: { l: 50, r: 10, t: 8, b: 28 }, height: 180, showlegend: true, legend: { orientation: "h", y: 1.15 },
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: th.text, size: 11 },
+        xaxis: { gridcolor: th.grid }, yaxis: { gridcolor: th.grid } },
+      { displayModeBar: false, responsive: true });
+    grid.replaceChildren(el("b", {}, "x"), el("b", {}, "model"), el("b", {}, "this run"),
+      ...t.x[k].flatMap((x, j) => [el("span", {}, fmt(x)), el("span", { class: "base" }, fmt(t.y[k][j])),
+        el("input", { type: "number", step: "any", value: ys[k][j] ?? "", class: ys[k][j] !== t.y[k][j] ? "changed" : "",
+          onchange: (e) => { ys[k][j] = e.target.value === "" ? t.y[k][j] : +e.target.value; save(); draw(); } })]));
+  };
+  body.replaceChildren(
+    el("p", { class: "note" }, "The model's own values (its sheets, not those chosen above). Type new ones, or change a stretch by a percentage."),
+    pick ? el("label", { class: "block" }, `${v.dims.join(" × ")} `, pick) : "",
+    el("div", { class: "table-tools" }, "From x ≥ ", from, " change the values by ", pct, " % ",
+      el("button", { type: "button", onclick: scale }, "Apply"), el("button", { type: "button", class: "ghost", onclick: reset }, "Reset"),
+      pick ? el("label", { class: "check" }, all, " all elements") : ""),
+    plot, grid);
+  draw();
+  requestAnimationFrame(() => Plotly.Plots.resize(plot));
+}
+
+// every combination of one element of each, as lists ("product") or labels ("a,b")
+function product(elements) {
   let out = [[]];
   for (const es of elements) out = out.flatMap((pre) => es.map((e) => pre.concat([e])));
-  return out.map((x) => x.join(","));
+  return out;
 }
+function cartesian(elements) { return product(elements).map((x) => x.join(",")); }
 
 function renderChanged() {
   const box = $("#changed");
   const items = [...S.edits].map(([k, val]) => {
     const v = S.byName.get(k);
     return el("div", {}, el("span", { class: "t" }, titleOf(v)),
-      el("span", {}, Array.isArray(val) ? "changed values" : `${fmt(v.value)} → ${fmt(val)}`),
+      el("span", {}, v.table ? "table changed" : Array.isArray(val) ? "changed values" : `${fmt(v.value)} → ${fmt(val)}`),
       el("button", { class: "ghost", title: "Back to the model's value", onclick: () => { S.edits.delete(k); renderParams(); renderChanged(); } }, "↺"));
   });
   for (const [k, id] of Object.entries(S.inputs)) {
@@ -723,28 +938,83 @@ function renderChanged() {
 async function newRun() {
   const btn = $("#run");
   btn.disabled = true;
-  status("Running…");
   try {
-    const run = await api("POST", "runs", { label: $("#run-label").value, params: Object.fromEntries(S.edits), inputs: S.inputs });
-    S.runs.push(run);
-    if (S.shown.length >= MAX_RUNS) toggleRun(S.shown[S.shown.length - 1], false);
-    toggleRun(run.id, true);
-    renderRunChips(); renderBaseline(); renderRunsTable();
-    toast(`"${run.label}" ran in ${run.seconds} s; it's shown in Explore.`);
+    const job = await api("POST", "runs", { label: $("#run-label").value, params: Object.fromEntries(S.edits), inputs: S.inputs });
     $("#run-label").value = "";
-    tab("explore");
-    await renderPanels();
-  } catch (e) { toast("The run failed: " + e.message, 8000); }
+    S.jobs.push({ ...job, status: "queued" });          // so that its end is seen, however soon it comes
+    toast(job.status === "queued" && job.position > 1 ? `Queued: ${job.position - 1} before yours.` : "Running…");
+    refreshJobs();
+  } catch (e) { toast("The run can't start: " + e.message, 8000); }
   btn.disabled = false;
-  status("");
+}
+
+// ---------------------------------------------------------------- jobs: runs and analyses waiting or running
+async function refreshJobs() {
+  if (STATIC) return;
+  clearTimeout(S.jobsTimer);
+  let jobs;
+  try { jobs = await api("GET", "jobs"); } catch (e) { return; }
+  const mine = jobs.filter((j) => j.user === S.me.user);
+  const was = new Map(S.jobs.map((j) => [j.id, j.status]));
+  S.jobs = mine;
+  for (const j of mine) {
+    const before = was.get(j.id);
+    if (before && before !== j.status && j.status === "done") await jobDone(j);
+    if (before && before !== j.status && j.status === "failed") toast(`"${j.label}" failed: ${j.message}`, 10000);
+  }
+  renderJobs();
+  if (mine.some((j) => j.status === "queued" || j.status === "running")) S.jobsTimer = setTimeout(refreshJobs, 1000);
+}
+async function jobDone(j) {
+  if (j.kind === "run") {
+    S.runs = await api("GET", "runs");
+    const run = runById(j.result);
+    if (run) {
+      if (S.shown.length >= MAX_RUNS) toggleRun(S.shown[S.shown.length - 1], false);
+      toggleRun(run.id, true);
+      toast(`"${run.label}" ran in ${run.seconds} s; it's shown in Explore.`);
+    }
+    renderRunChips(); renderBaseline(); renderRunsTable(); renderAnalysisForm();
+    if ($("#explore").classList.contains("active") || $("#runs").classList.contains("active")) await renderPanels();
+  } else {
+    S.analyses = await api("GET", "analyses");
+    S.sens = await api("GET", "analyses/" + encodeURIComponent(j.result));
+    renderSensPick(); renderSens(); renderAnalysisForm();
+    toast(`The analysis "${j.label}" is ready in Sensitivity.`);
+  }
+}
+function renderJobs() {
+  const keep = S.jobs.filter((j) => j.status !== "done" && j.status !== "cancelled");
+  $("#jobs").replaceChildren(...keep.map((j) => el("div", { class: "job" + (j.status === "failed" ? " failed" : "") },
+    el("span", { class: "what" }, el("b", {}, j.label), ` (${j.kind}) — `,
+      j.status === "queued" ? (j.position > 1 ? `waiting, ${j.position - 1} before it` : "next") :
+      j.status === "running" ? (j.kind === "analysis" ? `running, ${Math.round(100 * j.progress)} %` : "running") :
+      `failed: ${j.message}`),
+    j.status === "running" && j.kind === "analysis" ? el("progress", { max: 1, value: j.progress }) : null,
+    j.status === "queued" || (j.status === "running" && j.kind === "analysis") ?
+      el("button", { class: "ghost", onclick: () => cancelJob(j) }, "Cancel") : null)));
+}
+async function cancelJob(j) {
+  try { await api("DELETE", "jobs/" + encodeURIComponent(j.id)); refreshJobs(); } catch (e) { toast(e.message); }
 }
 
 // ---------------------------------------------------------------- sensitivity
+// a result's name: the variable's title, and its element ("x[a,b]")
+function outLabel(o) {
+  const k = o.indexOf("[");
+  const v = S.byName.get(k < 0 ? o : o.slice(0, k));
+  return (v ? titleOf(v) : show(o.slice(0, k < 0 ? undefined : k))) + (k < 0 ? "" : " " + o.slice(k));
+}
+
 function renderSens() {
-  if (!S.sens) return;
+  const none = !S.sens;
+  $("#sens-chart").style.display = none ? "none" : "";
+  $("#sens-note").textContent = none ? "No analysis yet: start one below." : $("#sens-note").textContent;
+  if (none) return;
   const sel = $("#sens-output");
-  if (!sel.options.length) {
-    sel.replaceChildren(...S.sens.outputs.map((o) => el("option", { value: o }, S.byName.has(o) ? titleOf(S.byName.get(o)) : show(o))));
+  if (sel.dataset.for !== S.sens.id) {
+    sel.dataset.for = S.sens.id;
+    sel.replaceChildren(...S.sens.outputs.map((o) => el("option", { value: o }, outLabel(o))));
   }
   const out = sel.value || S.sens.outputs[0];
   const n = +$("#sens-top").value;
@@ -756,11 +1026,14 @@ function renderSens() {
   const ink = th === "dark" ? { text: "#f0efec", muted: "#c3c2b7", grid: "#2c2c2a", bg: "#1a1a19" } :
     { text: "#0b0b0b", muted: "#52514e", grid: "#e6e5e1", bg: "#fcfcfb" };
   const label = (r) => { const v = S.byName.get(r.parameter); return v ? titleOf(v) : show(r.parameter); };
-  const ov = S.byName.get(out);
-  $("#sens-note").textContent = `Elasticity of ${ov ? titleOf(ov) : out} at the end of the run (${S.model.tf} ${S.model.time_unit}): ` +
+  const around = S.sens.around ? runById(S.sens.around) : null;
+  const skipped = (S.sens.skipped || []).length;
+  $("#sens-note").textContent = `Elasticity of ${outLabel(out)} at the end of the run (${S.model.tf} ${S.model.time_unit}), ` +
+    `around ${around ? "the run " + around.label : "the model's values"}: ` +
     `the % it changes when one parameter is 1 % higher, the others as in the model. ` +
     `Blue: it goes up; red: it goes down. Year parameters (a 1 % change moves them ~20 years) are left out unless included. ` +
-    `From ${S.sens.file}. Click a bar to change that parameter in a new run.`;
+    (skipped ? `${skipped} parameters left out (0, or years). ` : "") +
+    `Click a bar to change that parameter in a new run.`;
   const data = [{
     type: "bar", orientation: "h", x: rows.map((r) => r[out]), y: rows.map(label),
     marker: { color: rows.map((r) => (r[out] >= 0 ? DIVERGING[th][0] : DIVERGING[th][1])) },
@@ -860,6 +1133,320 @@ function highlight(line) {
     i = m.index + m[0].length;
   }
   return out + escapeHtml(line.slice(i));
+}
+
+// ---------------------------------------------------------------- analyses: pick, share, start
+function renderSensPick() {
+  const sel = $("#sens-pick");
+  sel.replaceChildren(...S.analyses.map((a) => el("option", { value: a.id, selected: S.sens && S.sens.id === a.id },
+    a.label + (a.owner && a.owner !== S.me.user ? ` · ${a.owner}` : "") + (a.owner === S.me.user && !a.shared ? " (private)" : ""))));
+  sel.disabled = !S.analyses.length;
+  const own = S.sens && S.sens.id !== "file" && mayChange(S.sens);
+  for (const id of ["#sens-share", "#sens-rename", "#sens-delete"]) $(id).hidden = !own || !!STATIC;
+  if (own) $("#sens-share").textContent = S.sens.shared ? "Unshare" : "Share";
+  $("#sens-meta").textContent = S.sens ? [S.sens.owner ? "by " + S.sens.owner : "", S.sens.created,
+    S.sens.seconds ? `${S.sens.seconds} s` : ""].filter(Boolean).join(" · ") : "";
+}
+async function pickAnalysis() {
+  try { S.sens = await api("GET", "analyses/" + encodeURIComponent($("#sens-pick").value)); } catch (e) { return toast(e.message); }
+  renderSensPick(); renderSens();
+}
+async function changeAnalysis(change) {
+  try {
+    const a = await api("PATCH", "analyses/" + encodeURIComponent(S.sens.id), change);
+    Object.assign(S.sens, a);
+    S.analyses = await api("GET", "analyses");
+    renderSensPick();
+  } catch (e) { toast(e.message); }
+}
+async function deleteAnalysis() {
+  if (!confirm(`Delete the analysis "${S.sens.label}"?`)) return;
+  try {
+    await api("DELETE", "analyses/" + encodeURIComponent(S.sens.id));
+    S.analyses = await api("GET", "analyses");
+    S.sens = S.analyses.length ? await api("GET", "analyses/" + encodeURIComponent(S.analyses[0].id)) : null;
+    renderSensPick(); renderSens(); renderAnalysisForm();
+  } catch (e) { toast(e.message); }
+}
+
+function foundParams() {
+  const q = $("#an-par-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return editableParams().filter((v) => !v.table).filter((v) => {
+    const hay = (v.title + " " + v.name + " " + v.description + " " + v.set).toLowerCase().replace(/_/g, " ");
+    return q.every((w) => hay.includes(w.replace(/_/g, " ")));
+  });
+}
+function renderAnalysisForm() {
+  if (STATIC) return;
+  const sel = $("#an-around");
+  const keep = sel.value;
+  sel.replaceChildren(el("option", { value: "" }, "the model's values"),
+    ...S.runs.filter((r) => r.owner !== "").map((r) => el("option", { value: r.id }, runLabel(r))));
+  sel.value = runById(keep) ? keep : "";
+  const mine = S.analyses.filter((a) => a.owner === S.me.user).length;
+  const L = S.me.limits;
+  $("#an-limits").textContent = S.me.admin || S.me.local ? "" :
+    `You keep ${mine} of ${L.max_analyses_per_user} analyses; at most ${L.max_params_per_analysis} parameters each.`;
+  // the results: those plotted, picked first
+  if (!S.anOutputs.size) for (const p of S.panels) { const v = S.byName.get(p.name); if (v && (v.kind === "stock" || v.kind === "aux")) S.anOutputs.add(p.name); }
+  renderAnalysisParams(); renderAnalysisOutputs();
+}
+function renderAnalysisParams() {
+  const found = foundParams();
+  const list = found.slice(0, 200);
+  const limit = S.me.admin || S.me.local ? Infinity : S.me.limits.max_params_per_analysis;
+  $("#an-par-count").textContent = `${S.anParams.size} picked` + (limit < Infinity ? ` (at most ${limit})` : "") +
+    ` · ${found.length} found` + (found.length > list.length ? ", the first 200 shown" : "");
+  $("#an-params").replaceChildren(...list.map((v) => el("label", { title: `${v.name}\n${v.description || ""}` },
+    el("input", { type: "checkbox", checked: S.anParams.has(v.name), onchange: (e) => {
+      e.target.checked ? S.anParams.add(v.name) : S.anParams.delete(v.name); renderAnalysisParams(); } }),
+    titleOf(v), el("small", {}, v.set))));
+}
+function renderAnalysisOutputs() {
+  const q = $("#an-out-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const all = S.model.names.filter((v) => v.kind === "stock" || v.kind === "aux");
+  const found = q.length ? all.filter((v) => q.every((w) => (v.title + " " + v.name + " " + v.description).toLowerCase().replace(/_/g, " ").includes(w.replace(/_/g, " "))))
+    : all.filter((v) => S.anOutputs.has(v.name));
+  $("#an-out-count").textContent = `${S.anOutputs.size} picked` + (q.length ? "" : " (search to add more)");
+  $("#an-outputs").replaceChildren(...found.slice(0, 100).map((v) => el("label", { title: v.description || "" },
+    el("input", { type: "checkbox", checked: S.anOutputs.has(v.name), onchange: (e) => {
+      e.target.checked ? S.anOutputs.add(v.name) : S.anOutputs.delete(v.name); renderAnalysisOutputs(); } }),
+    titleOf(v), el("small", {}, v.unit))));
+}
+async function startAnalysis() {
+  const step = +$("#an-step").value / 100;
+  try {
+    const job = await api("POST", "analyses", { label: $("#an-label").value, around: $("#an-around").value,
+      params: [...S.anParams], outputs: [...S.anOutputs], step, years: $("#an-years").checked });
+    $("#an-label").value = "";
+    S.jobs.push({ ...job, status: "queued" });
+    toast(`The analysis is ${job.status === "queued" && job.position > 1 ? `queued, ${job.position - 1} before it` : "running"}; its progress is in Runs.`);
+    refreshJobs();
+  } catch (e) { toast("The analysis can't start: " + e.message, 8000); }
+}
+
+// ---------------------------------------------------------------- administrators
+const SETTINGS = [
+  ["max_parallel", "Simulations at once", "everyone's runs and analyses together; the server has THREADS threads"],
+  ["max_jobs_per_user", "Jobs per user", "runs and analyses one user can have waiting or running"],
+  ["max_runs_per_user", "Runs kept per user", "about 14 MB each for a large model"],
+  ["max_analyses_per_user", "Analyses kept per user", "a small table each"],
+  ["max_params_per_analysis", "Parameters per analysis", "one run each, one after another"],
+  ["max_uploads_per_user", "Uploaded files per user", "their own versions of the model's Excel files; 0: no uploads"],
+  ["max_upload_mb", "Largest upload (MB)", "an uploaded Excel file at most this big"],
+  ["show_code", "Show the code to users", "administrators always see it"],
+];
+async function renderAdmin() {
+  let a;
+  try { a = await api("GET", "admin"); } catch (e) { return toast(e.message); }
+  const box = $("#admin-settings");
+  if (!box.children.length) {
+    box.replaceChildren(...SETTINGS.map(([k, label, help]) => el("div", { class: "settings-row" },
+      el("label", { for: "set-" + k }, label, el("small", {}, help.replace("THREADS", a.threads))),
+      k === "show_code" ? el("input", { type: "checkbox", id: "set-" + k, checked: a.settings[k] }) :
+        el("input", { type: "number", id: "set-" + k, value: a.settings[k], min: k === "max_uploads_per_user" ? 0 : 1, step: 1 }))));
+  }
+  $("#admin-threads").textContent = `${a.running} simulation${a.running === 1 ? "" : "s"} running now; ${a.threads} Julia threads.`;
+  $("#admin-users tbody").replaceChildren(...a.users.map((u) => el("tr", {},
+    el("td", {}, u.user || "everyone"), el("td", {}, String(u.runs)), el("td", {}, String(u.shared)),
+    el("td", {}, String(u.analyses)), el("td", {}, `${u.mb} MB`))));
+  $("#admin-jobs tbody").replaceChildren(...a.jobs.slice().reverse().map((j) => el("tr", {},
+    el("td", {}, j.user), el("td", {}, `${j.label} (${j.kind})`),
+    el("td", {}, j.status + (j.status === "running" && j.kind === "analysis" ? ` ${Math.round(100 * j.progress)} %` : "") +
+      (j.message && j.status === "failed" ? `: ${j.message}` : "")),
+    el("td", {}, j.created || ""), el("td", {}, j.started || ""), el("td", {}, j.finished || ""),
+    el("td", {}, j.status === "queued" || (j.status === "running" && j.kind === "analysis") ?
+      el("button", { class: "ghost", onclick: async () => { try { await api("DELETE", "jobs/" + j.id); renderAdmin(); } catch (e) { toast(e.message); } } }, "Cancel") : ""))));
+}
+async function saveSettings() {
+  const body = {};
+  for (const [k] of SETTINGS) {
+    const i = $("#set-" + k);
+    body[k] = k === "show_code" ? i.checked : Math.round(+i.value);
+  }
+  try {
+    await api("PUT", "admin/settings", body);
+    S.me = await api("GET", "me");
+    toast("Saved.");
+    renderAdmin();
+  } catch (e) { toast(e.message, 6000); }
+}
+
+// ---------------------------------------------------------------- logging in (users = :password)
+function showLogin() {
+  const box = $("#login");
+  if (!box.hidden) return;
+  box.hidden = false;
+  $("#login-title").textContent = document.title.replace(" · PySD Explorer", "") || "PySD Explorer";
+  $("#login-user").focus();
+  $("#login-form").onsubmit = async (e) => {
+    e.preventDefault();
+    $("#login-go").disabled = true;
+    $("#login-error").hidden = true;
+    try {
+      await api("POST", "login", { user: $("#login-user").value.trim(), password: $("#login-password").value });
+      location.reload();
+    } catch (err) {
+      $("#login-error").textContent = err.message; $("#login-error").hidden = false;
+      $("#login-password").value = "";
+    }
+    $("#login-go").disabled = false;
+  };
+}
+async function changePassword(e) {
+  if (e.submitter && e.submitter.value === "cancel") return;
+  e.preventDefault();
+  const err = $("#pw-error");
+  const [cur, nw, again] = ["#pw-current", "#pw-new", "#pw-again"].map((x) => $(x).value);
+  if (nw !== again) { err.textContent = "The two new passwords differ."; err.hidden = false; return; }
+  try {
+    await api("POST", "password", { current: cur, new: nw });
+    $("#dlg-password").close();
+    alert("Password changed. Log in again with the new one.");
+    location.reload();
+  } catch (x) { err.textContent = x.message; err.hidden = false; }
+}
+function showSecret(title, password) {
+  $("#secret-title").textContent = title;
+  $("#secret-value").textContent = password;
+  $("#dlg-secret").showModal();
+}
+async function renderLogins() {
+  if (S.me.auth !== "password") return;
+  $("#admin-accounts").hidden = false;
+  let users;
+  try { users = await api("GET", "admin/users"); } catch (e) { return toast(e.message); }
+  $("#admin-logins tbody").replaceChildren(...users.map((u) => el("tr", {},
+    el("td", {}, el("b", {}, u.user), u.user === S.me.user ? el("small", {}, " (you)") : null),
+    el("td", {}, el("input", { type: "checkbox", checked: u.admin, title: "Administrator", onchange: async (ev) => {
+      try { await api("PATCH", "admin/users/" + encodeURIComponent(u.user), { admin: ev.target.checked }); }
+      catch (x) { toast(x.message); ev.target.checked = !ev.target.checked; }
+    } })),
+    el("td", {}, el("small", {}, u.last_login || "never")),
+    el("td", {}, String(u.runs)),
+    el("td", {},
+      el("button", { class: "ghost", onclick: async () => {
+        if (!confirm(`Give ${u.user} a new password? Their current one stops working, and they're logged out.`)) return;
+        try { showSecret(`New password for ${u.user}`, (await api("POST", `admin/users/${encodeURIComponent(u.user)}/password`)).password); }
+        catch (x) { toast(x.message); }
+      } }, "New password"),
+      u.user === S.me.user ? null : el("button", { class: "ghost", onclick: async () => {
+        if (!confirm(`Remove ${u.user}? They can't log in any more; their runs stay (you can delete them).`)) return;
+        try { await api("DELETE", "admin/users/" + encodeURIComponent(u.user)); renderLogins(); } catch (x) { toast(x.message); }
+      } }, "Remove")))));
+}
+async function addUser(e) {
+  e.preventDefault();
+  const name = $("#new-user-name").value.trim();
+  try {
+    const r = await api("POST", "admin/users", { name, admin: $("#new-user-admin").checked });
+    $("#new-user").reset();
+    showSecret(`Password for ${r.user}`, r.password);
+    renderLogins();
+  } catch (x) { toast(x.message, 6000); }
+}
+
+// ---------------------------------------------------------------- input sheets: the user's choices, uploads
+async function refreshInputs() {
+  if (STATIC) return;
+  try {
+    const [inputs, up] = await Promise.all([api("GET", "inputs"), api("GET", "uploads")]);
+    S.model.inputs = inputs; S.uploads = up.uploads; S.uploadFiles = up.files;
+  } catch (e) { return; }
+  renderInputs(); renderUploads();
+}
+function renderUploads() {
+  const L = S.me.limits || {};
+  const mine = S.uploads.filter((u) => u.owner === S.me.user).length;
+  const box = $("#uploads-box");
+  box.hidden = !S.uploadFiles.length || (!S.me.admin && L.max_uploads_per_user === 0);
+  $("#upload-limits").textContent = S.me.admin || S.me.local ? "" :
+    `You keep ${mine} of ${L.max_uploads_per_user} files, ${L.max_upload_mb} MB each at most.`;
+  const sel = $("#upload-replaces");
+  const keep = sel.value;
+  sel.replaceChildren(...S.uploadFiles.map((f) => el("option", { value: f }, f + ".xlsx")));
+  if (S.uploadFiles.includes(keep)) sel.value = keep;
+  $("#upload-list").replaceChildren(...S.uploads.map((u) => el("div", { class: "upload-row" },
+    el("span", { class: "t" }, el("b", {}, u.label), ` — replaces ${u.replaces}.xlsx; sheets: ${u.sheets.join(", ")}`),
+    el("small", {}, u.owner === S.me.user ? (u.shared ? "shared" : "private") : "by " + u.owner),
+    mayChange(u) ? el("button", { class: "ghost", onclick: () => changeUpload(u, { shared: !u.shared }) }, u.shared ? "Unshare" : "Share") : null,
+    mayChange(u) ? el("button", { class: "ghost", title: "Delete", onclick: () => deleteUpload(u) }, "✕") : null)));
+}
+async function uploadSheet(e) {
+  e.preventDefault();
+  const file = $("#upload-file").files[0];
+  if (!file) return;
+  const limit = (S.me.limits || {}).max_upload_mb;
+  if (limit && file.size > limit * 2 ** 20) return toast(`The file is larger than ${limit} MB.`);
+  const q = new URLSearchParams({ replaces: $("#upload-replaces").value, label: $("#upload-label").value });
+  $("#upload-go").disabled = true;
+  try {
+    const r = await fetch("api/uploads?" + q, { method: "POST", body: await file.arrayBuffer(),
+      headers: { "X-PySD-Request": "1", "Content-Type": "application/octet-stream" } });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    $("#upload-form").reset();
+    toast(`"${j.label}" uploaded: its sheets (${j.sheets.join(", ")}) are now in the input sheets' choices.`, 6000);
+    await refreshInputs();
+  } catch (x) { toast("The upload failed: " + x.message, 8000); }
+  $("#upload-go").disabled = false;
+}
+async function changeUpload(u, change) {
+  try { await api("PATCH", "uploads/" + encodeURIComponent(u.id), change); await refreshInputs(); } catch (x) { toast(x.message); }
+}
+async function deleteUpload(u) {
+  if (!confirm(`Delete "${u.label}"? Runs made with it keep their results.`)) return;
+  try {
+    await api("DELETE", "uploads/" + encodeURIComponent(u.id));
+    for (const [k, id] of Object.entries(S.inputs)) if (id.includes(u.id)) delete S.inputs[k];
+    await refreshInputs(); renderChanged();
+  } catch (x) { toast(x.message); }
+}
+
+// ---------------------------------------------------------------- resizable columns
+// A handle between side-by-side columns (the tree and the plots; the two
+// columns of Runs, Code, Sensitivity and Admin): drag it, double-click to undo.
+// Widths are remembered in this browser.
+function splitters() {
+  const remember = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
+  const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const replot = debounce(() => document.querySelectorAll(".plot, .table-plot").forEach((p) => { if (p.data) Plotly.Plots.resize(p); }), 100);
+  const handle = (key, first, apply, clear) => {
+    const h = el("div", { class: "splitter", role: "separator", "aria-orientation": "vertical", title: "Drag to resize; double-click to undo" });
+    const w = recall(key);
+    if (w) apply(+w);
+    h.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      try { h.setPointerCapture(e.pointerId); } catch {}
+      const x0 = e.clientX, w0 = first().getBoundingClientRect().width;
+      document.body.classList.add("resizing");
+      const move = (ev) => { const w = Math.round(w0 + ev.clientX - x0); apply(w); replot(); };
+      const up = () => {
+        h.removeEventListener("pointermove", move); h.removeEventListener("pointerup", up);
+        document.body.classList.remove("resizing");
+        remember(key, Math.round(first().getBoundingClientRect().width));
+      };
+      h.addEventListener("pointermove", move); h.addEventListener("pointerup", up);
+    });
+    h.addEventListener("dblclick", () => { clear(); remember(key, null); replot(); });
+    return h;
+  };
+  // the tree of names
+  const aside = $("#sidebar");
+  const clampSide = (w) => Math.max(180, Math.min(w, window.innerWidth * 0.6));
+  aside.after(handle("pysd-width-sidebar", () => aside,
+    (w) => aside.style.setProperty("--side", clampSide(w) + "px"), () => aside.style.removeProperty("--side")));
+  // the two columns of a tab
+  document.querySelectorAll(".runs-grid, .code-grid, .an-grid").forEach((g, i) => {
+    const [a] = g.children;
+    if (g.children.length !== 2) return;
+    g.classList.add("split");
+    const key = "pysd-width-" + (g.closest("section") || {}).id + "-" + i;
+    const clamp = (w) => Math.max(200, Math.min(w, g.getBoundingClientRect().width - 220 || w));
+    a.after(handle(key, () => g.children[0],
+      (w) => { g.style.setProperty("--first", clamp(w) + "px"); g.style.setProperty("--second", "minmax(0, 1fr)"); },
+      () => { g.style.removeProperty("--first"); g.style.removeProperty("--second"); }));
+  });
 }
 
 start().catch((e) => { status("Couldn't load: " + e.message); console.error(e); });
