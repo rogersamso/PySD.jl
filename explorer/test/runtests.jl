@@ -406,6 +406,10 @@ end
     @test t["elements"] == ["north", "south"] && t["x"][2] == [0, 1, 2, 4] && t["y"][2] == [10, 20, 30, 40]
     @test PE.table_info(ex, :effect)["y"] == [[1, 2, 3]]
     @test_throws KeyError PE.table_info(ex, :k)
+    # an array of two dimensions or more: its tables in Tables order (the first dimension slowest)
+    f(v) = PySD.pysd_build_tab_itp([v, v], [0.0, 1.0], :interpolate)
+    series, sz = PE._as_table(PySD.LookupArray([f(1.0) f(2.0) f(3.0); f(4.0) f(5.0) f(6.0)]))
+    @test sz == (2, 3) && [last(PE._points(g))[1] for g in series] == [1, 2, 3, 4, 5, 6]
 
     # a run with other values in the tables (the same x)
     job = finish(ex, PE.submit_run!(ex, "local", "Tables", ["effect" => [[1, 2, 30]], "power" => [[1, 2, 3, 4], [10, 20, 30, 400]],

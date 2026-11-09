@@ -22,7 +22,7 @@ _as_table(x::_Series) = (Any[x], ())
 function _as_table(x::PySD.LookupArray)
     s = x.series
     all(f -> f isa _Series, s) || return nothing
-    return (Any[s[reverse(Tuple(J))...] for J in CartesianIndices(reverse(size(s)))], size(s))
+    return (Any[s[reverse(Tuple(J))...] for J in vec(CartesianIndices(reverse(size(s))))], size(s))
 end
 _as_table(_) = nothing
 
