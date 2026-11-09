@@ -76,6 +76,7 @@ function routes(ex::Explorer)
     on("PATCH", "/api/uploads/{id}", (req, u) -> _json_response(change_upload!(ex, u, _param(req, "id"), _body(req))))
     on("DELETE", "/api/uploads/{id}", (req, u) -> (delete_upload!(ex, u, _param(req, "id")); _json_response(Dict("deleted" => true))))
 
+    on("GET", "/api/tables/{name}", (req, u) -> _json_response(table_info(ex, Symbol(_param(req, "name")))))
     on("GET", "/api/runs", (_, u) -> _json_response(runs_info(ex, u)))
     on("POST", "/api/runs", (req, u) -> begin
         b = _body(req)

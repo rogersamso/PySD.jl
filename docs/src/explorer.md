@@ -36,11 +36,14 @@ translated by PySD has all of them.
 Every parameter can change in a run: a number or an array written in the
 model (Vensim's `x = 3`, `x[region] = 1, 2, 3`) as well as one read from an
 Excel file.  A number gets a slider when it has limits, a box otherwise; an
-array, a box per element.  Names computed from others (`x = 2 * y`), the
-parameters that fix the structure of an operator (a delay's order), and
-lookups and data series (they change with the input sheets) have no control.
-An Excel upload replaces only the values read from Excel; numbers written in
-the model change with their controls.
+array, a box per element.  A lookup or a data series (a value for each x,
+or each year; Vensim's `GET DIRECT LOOKUPS`, `GET DIRECT DATA`, tables) is a
+table to edit: its values over the same x, typed one by one or a stretch
+changed by a percentage ("from 2030, +20 %"), drawn against the model's; an
+array of them, a table per element.  Names computed from others (`x = 2 *
+y`) and the parameters that fix the structure of an operator (a delay's
+order) have no control.  An Excel upload replaces only the values read from
+Excel; what is written in the model changes with its controls.
 
 A model whose data come from another model's results (`data(parents, …)`,
 as a regional model reads the world's) needs those results to start: the
@@ -55,6 +58,8 @@ them up: *Σ add up* on the sectors gives one line per fuel), so any slice of
 it is a couple of clicks.  Figures export as PNG or SVG, what is on screen
 as CSV, the whole page as one HTML file, and each run's complete results as
 CSV from the **Runs** tab (a row per name or element, a column per time).
+The columns side by side (the tree of names, the two halves of a tab) widen
+or narrow by dragging the line between them; a double-click puts them back.
 
 Other options: `input_dirs` (folders whose `.xlsx` sheets, named like the
 model's own files, can replace its input sheets in a run; users can also

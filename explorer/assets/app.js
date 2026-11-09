@@ -145,6 +145,7 @@ function wire() {
   $("#param-search").addEventListener("input", debounce(() => { S.paramsAll = false; renderParams(); }, 150));
   $("#reset-all").addEventListener("click", () => { S.edits.clear(); S.inputs = {}; renderInputs(); renderParams(); renderChanged(); });
   $("#run").addEventListener("click", newRun);
+  splitters();
   $("#sens-output").addEventListener("change", renderSens);
   $("#sens-pick").addEventListener("change", pickAnalysis);
   $("#sens-share").addEventListener("click", () => changeAnalysis({ shared: !S.sens.shared }));
@@ -312,7 +313,8 @@ function changesText(r, max = 99) {
   const out = [];
   for (const [k, v] of Object.entries(r.params || {})) {
     const m = S.byName.get(k);
-    out.push(`${m ? titleOf(m) : k} = ${Array.isArray(v) ? "[" + v.map(fmt).join(", ") + "]" : fmt(v)}`);
+    out.push(m && m.table ? `${titleOf(m)}: table changed` :
+      `${m ? titleOf(m) : k} = ${Array.isArray(v) ? "[" + v.map(fmt).join(", ") + "]" : fmt(v)}`);
   }
   for (const [k, v] of Object.entries(r.inputs || {})) {
     const c = (S.model.inputs[k] || []).find((c) => c.id === v);
@@ -775,7 +777,7 @@ function renderInputs() {
 }
 
 function editableParams() {
-  return S.model.names.filter((v) => v.kind === "parameter" && v.value !== null && v.value !== undefined);
+  return S.model.names.filter((v) => v.kind === "parameter" && (v.table || (v.value !== null && v.value !== undefined)));
 }
 function renderParams() {
   const q = $("#param-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -796,6 +798,7 @@ function renderParams() {
 }
 
 function paramRow(v) {
+  if (v.table) return tableRow(v);
   const changed = S.edits.has(v.name);
   const cur = changed ? S.edits.get(v.name) : v.value;
   const row = el("div", { class: "param" + (changed ? " changed-row" : ""), title: `${v.name}\n\n${v.description || ""}` },
@@ -834,6 +837,78 @@ function paramRow(v) {
   }
   return row;
 }
+// ---------------------------------------------------------------- tables
+// A lookup or data series: its values at each x (a table per element of an
+// array), changed over the same x.  S.edits holds a list of values per element.
+const TABLES = new Map();
+async function tableOf(name) {
+  if (!TABLES.has(name)) TABLES.set(name, await api("GET", "tables/" + encodeURIComponent(name)));
+  return TABLES.get(name);
+}
+const sameValues = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+function tableRow(v) {
+  const changed = S.edits.has(v.name);
+  const row = el("div", { class: "param" + (changed ? " changed-row" : ""), title: `${v.name}\n\n${v.description || ""}` },
+    el("div", { class: "name" }, el("span", { class: "t" }, titleOf(v)), el("span", { class: "u" }, v.unit)),
+    el("div", { class: "set" }, v.set));
+  const body = el("div", { class: "table-edit" });
+  const det = el("details", {}, el("summary", {}, "table" + (v.dims.length ? ` per ${v.dims.join(" × ")}` : "") + " — edit"), body);
+  det.addEventListener("toggle", async () => {
+    if (!det.open || body.childElementCount) return;
+    try { tableEditor(v, row, body, await tableOf(v.name)); } catch (e) { body.textContent = e.message; }
+  });
+  row.append(det);
+  return row;
+}
+
+function tableEditor(v, row, body, t) {
+  let ys = S.edits.has(v.name) ? S.edits.get(v.name).map((y) => y.slice()) : t.y.map((y) => y.slice());
+  let k = 0;
+  const save = () => {
+    const same = ys.every((y, i) => sameValues(y, t.y[i]));
+    if (same) S.edits.delete(v.name); else S.edits.set(v.name, ys.map((y) => y.slice()));
+    row.classList.toggle("changed-row", !same);
+    renderChanged();
+  };
+  const pick = t.elements.length > 1 ? el("select", { onchange: (e) => { k = +e.target.value; draw(); } },
+    ...t.elements.map((e, i) => el("option", { value: i }, e))) : null;
+  const from = el("input", { type: "number", step: "any", value: t.x[0][Math.floor(t.x[0].length / 2)] ?? "", style: "width:6em" });
+  const pct = el("input", { type: "number", step: "any", value: 10, style: "width:5em" });
+  const all = el("input", { type: "checkbox" });
+  const scale = () => {
+    const x0 = +from.value, f = 1 + (+pct.value) / 100;
+    for (const i of all.checked ? ys.keys() : [k]) ys[i] = ys[i].map((y, j) => t.x[i][j] >= x0 ? y * f : y);
+    save(); draw();
+  };
+  const reset = () => { for (const i of all.checked ? ys.keys() : [k]) ys[i] = t.y[i].slice(); save(); draw(); };
+  const plot = el("div", { class: "table-plot" });
+  const grid = el("div", { class: "table-grid" });
+  const draw = () => {
+    const th = { muted: css("--text-muted"), accent: css("--accent"), text: css("--text-secondary"), grid: css("--grid") };
+    Plotly.react(plot, [
+      { x: t.x[k], y: t.y[k], name: "model", mode: "lines", line: { color: th.muted, dash: "dot", width: 2 } },
+      { x: t.x[k], y: ys[k], name: "this run", mode: "lines+markers", line: { color: th.accent, width: 2 }, marker: { size: 5 } }],
+      { margin: { l: 50, r: 10, t: 8, b: 28 }, height: 180, showlegend: true, legend: { orientation: "h", y: 1.15 },
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: th.text, size: 11 },
+        xaxis: { gridcolor: th.grid }, yaxis: { gridcolor: th.grid } },
+      { displayModeBar: false, responsive: true });
+    grid.replaceChildren(el("b", {}, "x"), el("b", {}, "model"), el("b", {}, "this run"),
+      ...t.x[k].flatMap((x, j) => [el("span", {}, fmt(x)), el("span", { class: "base" }, fmt(t.y[k][j])),
+        el("input", { type: "number", step: "any", value: ys[k][j] ?? "", class: ys[k][j] !== t.y[k][j] ? "changed" : "",
+          onchange: (e) => { ys[k][j] = e.target.value === "" ? t.y[k][j] : +e.target.value; save(); draw(); } })]));
+  };
+  body.replaceChildren(
+    el("p", { class: "note" }, "The model's own values (its sheets, not those chosen above). Type new ones, or change a stretch by a percentage."),
+    pick ? el("label", { class: "block" }, `${v.dims.join(" × ")} `, pick) : "",
+    el("div", { class: "table-tools" }, "From x ≥ ", from, " change the values by ", pct, " % ",
+      el("button", { type: "button", onclick: scale }, "Apply"), el("button", { type: "button", class: "ghost", onclick: reset }, "Reset"),
+      pick ? el("label", { class: "check" }, all, " all elements") : ""),
+    plot, grid);
+  draw();
+  requestAnimationFrame(() => Plotly.Plots.resize(plot));
+}
+
 // every combination of one element of each, as lists ("product") or labels ("a,b")
 function product(elements) {
   let out = [[]];
@@ -847,7 +922,7 @@ function renderChanged() {
   const items = [...S.edits].map(([k, val]) => {
     const v = S.byName.get(k);
     return el("div", {}, el("span", { class: "t" }, titleOf(v)),
-      el("span", {}, Array.isArray(val) ? "changed values" : `${fmt(v.value)} → ${fmt(val)}`),
+      el("span", {}, v.table ? "table changed" : Array.isArray(val) ? "changed values" : `${fmt(v.value)} → ${fmt(val)}`),
       el("button", { class: "ghost", title: "Back to the model's value", onclick: () => { S.edits.delete(k); renderParams(); renderChanged(); } }, "↺"));
   });
   for (const [k, id] of Object.entries(S.inputs)) {
@@ -1096,7 +1171,7 @@ async function deleteAnalysis() {
 
 function foundParams() {
   const q = $("#an-par-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  return editableParams().filter((v) => {
+  return editableParams().filter((v) => !v.table).filter((v) => {
     const hay = (v.title + " " + v.name + " " + v.description + " " + v.set).toLowerCase().replace(/_/g, " ");
     return q.every((w) => hay.includes(w.replace(/_/g, " ")));
   });
@@ -1326,6 +1401,52 @@ async function deleteUpload(u) {
     for (const [k, id] of Object.entries(S.inputs)) if (id.includes(u.id)) delete S.inputs[k];
     await refreshInputs(); renderChanged();
   } catch (x) { toast(x.message); }
+}
+
+// ---------------------------------------------------------------- resizable columns
+// A handle between side-by-side columns (the tree and the plots; the two
+// columns of Runs, Code, Sensitivity and Admin): drag it, double-click to undo.
+// Widths are remembered in this browser.
+function splitters() {
+  const remember = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
+  const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const replot = debounce(() => document.querySelectorAll(".plot, .table-plot").forEach((p) => { if (p.data) Plotly.Plots.resize(p); }), 100);
+  const handle = (key, first, apply, clear) => {
+    const h = el("div", { class: "splitter", role: "separator", "aria-orientation": "vertical", title: "Drag to resize; double-click to undo" });
+    const w = recall(key);
+    if (w) apply(+w);
+    h.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      try { h.setPointerCapture(e.pointerId); } catch {}
+      const x0 = e.clientX, w0 = first().getBoundingClientRect().width;
+      document.body.classList.add("resizing");
+      const move = (ev) => { const w = Math.round(w0 + ev.clientX - x0); apply(w); replot(); };
+      const up = () => {
+        h.removeEventListener("pointermove", move); h.removeEventListener("pointerup", up);
+        document.body.classList.remove("resizing");
+        remember(key, Math.round(first().getBoundingClientRect().width));
+      };
+      h.addEventListener("pointermove", move); h.addEventListener("pointerup", up);
+    });
+    h.addEventListener("dblclick", () => { clear(); remember(key, null); replot(); });
+    return h;
+  };
+  // the tree of names
+  const aside = $("#sidebar");
+  const clampSide = (w) => Math.max(180, Math.min(w, window.innerWidth * 0.6));
+  aside.after(handle("pysd-width-sidebar", () => aside,
+    (w) => aside.style.setProperty("--side", clampSide(w) + "px"), () => aside.style.removeProperty("--side")));
+  // the two columns of a tab
+  document.querySelectorAll(".runs-grid, .code-grid, .an-grid").forEach((g, i) => {
+    const [a] = g.children;
+    if (g.children.length !== 2) return;
+    g.classList.add("split");
+    const key = "pysd-width-" + (g.closest("section") || {}).id + "-" + i;
+    const clamp = (w) => Math.max(200, Math.min(w, g.getBoundingClientRect().width - 220 || w));
+    a.after(handle(key, () => g.children[0],
+      (w) => { g.style.setProperty("--first", clamp(w) + "px"); g.style.setProperty("--second", "minmax(0, 1fr)"); },
+      () => { g.style.removeProperty("--first"); g.style.removeProperty("--second"); }));
+  });
 }
 
 start().catch((e) => { status("Couldn't load: " + e.message); console.error(e); });

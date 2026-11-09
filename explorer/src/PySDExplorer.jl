@@ -67,6 +67,7 @@ mutable struct Explorer
     row::Dict{Symbol,Int}
     editable::Dict{Symbol,Any}           # parameter => its value in the model (Float64, or a Vector in Tables order)
     sizes::Dict{Symbol,Tuple}
+    tables::Dict{Symbol,Tuple{Vector{Any},Tuple}}   # lookups and data series => their series (Tables order), size
     inputs::Dict{String,Vector{Tuple{String,String}}}   # input => (file, sheet) choices
     input_dirs::Vector{String}
     dir::String
@@ -91,6 +92,7 @@ mutable struct Explorer
 end
 
 include("model.jl")
+include("tables.jl")
 include("users.jl")
 include("auth.jl")
 include("runs.jl")
@@ -155,9 +157,9 @@ function explorer(model; dir = "explorer-data", title = "", input_dirs = String[
     vars = variables(m)
     row = Dict(n => i for (i, n) in enumerate(vars.name))
     base = Base.invokelatest(run_model, m)
-    editable, sizes = _editable(m, vars, base)
+    editable, sizes, tables = _editable(m, vars, base)
     code, sources = _code(m, vars.name)
-    ex = Explorer(m, title, vars, row, editable, sizes, _input_choices(m, input_dirs), String.(input_dirs), String(dir),
+    ex = Explorer(m, title, vars, row, editable, sizes, tables, _input_choices(m, input_dirs), String.(input_dirs), String(dir),
                   separator, code, sources, Dict{String,Run}(), Dict{String,Dict{String,Any}}(), Dict{String,Dict{String,Any}}(),
                   Auth(users, user_header, Set(String.(admins))), _load_settings(dir), Job[],
                   Threads.Condition(), 0, ReentrantLock(), Dict{String,String}(),

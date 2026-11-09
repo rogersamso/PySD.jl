@@ -13,7 +13,7 @@ end
 # the parameters a run can change: numbers and arrays of numbers (not lookups,
 # not those that fix the structure of an operator)
 function _editable(m::Model, vars, base::Results)
-    editable, sizes = Dict{Symbol,Any}(), Dict{Symbol,Tuple}()
+    editable, sizes, tables = Dict{Symbol,Any}(), Dict{Symbol,Tuple}(), Dict{Symbol,Tuple{Vector{Any},Tuple}}()
     for (i, n) in enumerate(vars.name)
         (vars.kind[i] === :parameter && !haskey(m.structural, n)) || continue
         x = getfield(base.par, m.byname[n].id)      # (not base[n]: arrays of lookups aren't DimArrays)
@@ -22,9 +22,11 @@ function _editable(m::Model, vars, base::Results)
         elseif x isa AbstractArray{<:Real}
             editable[n] = _flat(x)
             sizes[n] = size(x)
+        elseif (tb = _as_table(x)) !== nothing
+            tables[n] = tb
         end
     end
-    return editable, sizes
+    return editable, sizes, tables
 end
 
 # an array's values, the first dimension slowest (as the tables' columns)
@@ -33,7 +35,7 @@ function _flat(x::AbstractArray)
     return vec(Float64[x[reverse(Tuple(J))...] for J in CartesianIndices(reverse(sz))])
 end
 function _unflat(v::AbstractVector, sz::Tuple)
-    A = Array{Float64}(undef, sz)
+    A = Array{eltype(v)}(undef, sz)
     for (k, J) in enumerate(CartesianIndices(reverse(sz)))
         A[reverse(Tuple(J))...] = v[k]
     end
@@ -162,6 +164,7 @@ function model_info(ex::Explorer)
                   "limits" => v.limits[i] === nothing ? nothing : [isfinite(x) ? x : nothing for x in v.limits[i]],
                   "dims" => String.(collect(v.dims[i])), "elements" => [collect(e) for e in v.elements[i]],
                   "value" => _json(get(ex.editable, v.name[i], nothing)),
+                  "table" => haskey(ex.tables, v.name[i]),
                   "code" => [[f, l] for (f, l) in get(ex.sources, v.name[i], Tuple{String,Int}[])])
              for i in eachindex(v.name)]
     return Dict("title" => ex.title, "time_unit" => string(m.time_unit), "t0" => m.t0, "tf" => m.tf,

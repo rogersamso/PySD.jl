@@ -7,6 +7,10 @@ function _run_args(ex::Explorer, params, inputs; user = "local")
     ps = Pair{Symbol,Any}[]
     for (k, v) in params
         n = Symbol(k)
+        if haskey(ex.tables, n)
+            push!(ps, n => _table_value(ex, n, v))
+            continue
+        end
         haskey(ex.editable, n) || throw(ArgumentError("`$k` is not a parameter that can change"))
         if v isa Real
             ex.editable[n] isa Real || throw(ArgumentError("`$k` is an array"))
@@ -30,8 +34,12 @@ function _run_args(ex::Explorer, params, inputs; user = "local")
         push!(ins, Symbol(k) => PySD.excel(choices[c]...))
         kept[String(k)] = String(id)
     end
-    return ps, ins, Dict{String,Any}(string(k) => (v isa AbstractVector ? collect(v) : v) for (k, v) in params), kept
+    return ps, ins, Dict{String,Any}(string(k) => _kept(v) for (k, v) in params), kept
 end
+
+# a parameter's value as a run keeps it: a number, numbers, or a list of numbers per table
+_kept(v::AbstractVector) = [x isa AbstractVector ? collect(x) : x for x in v]
+_kept(v) = v
 
 _simulate(ex::Explorer, ps, ins) = Base.invokelatest(run_model, ex.model; params = (; ps...), inputs = (; ins...))
 
@@ -102,7 +110,7 @@ function _load(file)
     meta = Dict{String,Any}(String(k) => v for (k, v) in JSON3.read(read(file, String)))
     names = String.(meta["columns"])
     meta["time"] = Float64.(meta["time"])
-    meta["params"] = Dict{String,Any}(String(k) => (v isa AbstractVector ? collect(v) : v) for (k, v) in meta["params"])
+    meta["params"] = Dict{String,Any}(String(k) => _kept(v) for (k, v) in meta["params"])
     meta["inputs"] = Dict{String,Any}(String(k) => String(v) for (k, v) in meta["inputs"])
     # runs saved before there were users: everyone's
     meta["owner"] = String(get(meta, "owner", ""))
@@ -158,6 +166,9 @@ function change_run!(ex::Explorer, user, id, change)
     return r
 end
 
+_change_text(k, v) = v isa AbstractVector && any(x -> x isa AbstractVector, v) ? "$k: its table changed" :
+                     v isa AbstractVector ? "$k = [" * join(v, " ") * "]" : "$k = $v"
+
 """
     run_csv(ex, user, id) -> String
 
@@ -170,8 +181,8 @@ function run_csv(ex::Explorer, user, id)
     q(x) = (x = string(x); any(c -> c in (',', '"', '\n', '\r'), x) ? "\"" * replace(x, "\"" => "\"\"") * "\"" : x)
     num(x) = isfinite(x) ? string(x) : ""
     io = IOBuffer()
-    changes = join(vcat(["$k = $(v isa AbstractVector ? "[" * join(v, " ") * "]" : v)" for (k, v) in sort!(collect(r.meta["params"]))],
-                        ["$k: $(split(v, '|')[end])" for (k, v) in sort!(collect(r.meta["inputs"]))]), "; ")
+    changes = join(vcat([_change_text(k, v) for (k, v) in sort!(collect(r.meta["params"]); by = first)],
+                        ["$k: $(split(v, '|')[end])" for (k, v) in sort!(collect(r.meta["inputs"]); by = first)]), "; ")
     println(io, "# ", q(r.meta["label"]), " (", r.meta["created"], isempty(r.meta["owner"]) ? "" : ", " * r.meta["owner"], ")",
             isempty(changes) ? "" : ": " * changes)
     println(io, join(["name", "unit", (num(t) for t in r.meta["time"])...], ","))

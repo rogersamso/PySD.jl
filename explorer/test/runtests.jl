@@ -376,3 +376,65 @@ end
     @test resp.status == 200 && JSON3.read(resp.body).label == "Mine"
     @test JSON3.read(router(HTTP.Request("GET", "/api/uploads", ["X-PySD-User" => "pere"])).body).files == ["scen"]
 end
+
+@testset "explorer, tables" begin
+    xd = mktempdir()
+    file = joinpath(xd, "tables.xlsx")
+    PE.XLSX.writetable(file, "Tab" => (; x = [0.0, 1, 2, 4], north = [1.0, 2, 3, 4], south = [10.0, 20, 30, 40]); overwrite = true)
+    tab = PySD.excel(file, "Tab")
+    m = Model(@equations(begin
+        @parameters begin
+            effect = piecewise_linear(0 => 1.0, 2 => 2.0, 4 => 3.0), [unit = NoUnits]
+            power[region] = lookup(tab, "A2:A5", "B2:C5"), [unit = NoUnits]
+            history = data(tab, "A2:A5", "B2:B5"), [unit = NoUnits]
+            k = 2, [unit = NoUnits]
+        end
+        @variables begin
+            y(t), [unit = NoUnits]
+            z(t)[region], [unit = NoUnits]
+            h(t), [unit = NoUnits]
+        end
+        y ~ k * effect(t)
+        z ~ power(t)
+        h ~ history(t)
+    end); time = 0:1:4, time_unit = u"s", inputs = (; tab))
+    ex = PE.explorer(m; dir = mktempdir())
+    @test sort!(collect(keys(ex.tables))) == [:effect, :history, :power]
+    info = Dict(n["name"] => n for n in PE.model_info(ex)["names"])
+    @test info["effect"]["table"] && info["power"]["table"] && !info["k"]["table"] && info["effect"]["value"] === nothing
+    t = PE.table_info(ex, :power)
+    @test t["elements"] == ["north", "south"] && t["x"][2] == [0, 1, 2, 4] && t["y"][2] == [10, 20, 30, 40]
+    @test PE.table_info(ex, :effect)["y"] == [[1, 2, 3]]
+    @test_throws KeyError PE.table_info(ex, :k)
+
+    # a run with other values in the tables (the same x)
+    job = finish(ex, PE.submit_run!(ex, "local", "Tables", ["effect" => [[1, 2, 30]], "power" => [[1, 2, 3, 4], [10, 20, 30, 400]],
+                                                         "history" => [[5, 5, 5, 5]], "k" => 1], Pair{String,String}[]))
+    @test job.status === :done
+    r = ex.runs[job.result]
+    s(name) = PE.series(ex, "local", name, [r.meta["id"]])["runs"][r.meta["id"]]
+    @test s("y")[1][end] == 30 && s("y")[1][2] ≈ 1.5           # k = 1; between the points, a straight line
+    @test s("z")[1][end] == 4 && s("z")[2][end] == 400 && s("z")[2][4] == 30 + (400 - 30) / 2
+    @test all(==(5), s("h")[1])
+    base = ex.runs[first(id for (id, x) in ex.runs if x.meta["label"] == "Base")]
+    @test PE.series(ex, "local", "y", [base.meta["id"]])["runs"][base.meta["id"]][1][end] == 6     # the model's: unchanged
+    @test r.meta["params"]["power"] == [[1, 2, 3, 4], [10, 20, 30, 400]]
+    again = PE.explorer(m; dir = ex.dir)                                                       # kept as they were
+    @test again.runs[r.meta["id"]].meta["params"]["effect"] == [[1, 2, 30]]
+    csv = PE.run_csv(ex, "local", r.meta["id"])
+    @test occursin("effect: its table changed", csv) && occursin("k = 1", csv)
+    # and an analysis around that run keeps them
+    a = finish(ex, PE.submit_analysis!(ex, "local"; around = r.meta["id"], params = ["k"], outputs = ["y"]))
+    @test a.status === :done
+    @test ex.analyses[a.result]["rows"][1]["y"] ≈ 1 atol = 1e-6
+
+    # checked: the right number of tables, of values, numbers
+    bad(v) = PE._run_args(ex, ["power" => v], Pair{String,String}[])
+    @test_throws ArgumentError bad([[1, 2, 3, 4]])
+    @test_throws ArgumentError bad([[1, 2, 3], [1, 2, 3, 4]])
+    @test_throws ArgumentError bad([[1, 2, 3, "x"], [1, 2, 3, 4]])
+    @test_throws ArgumentError bad(5)
+    @test_throws ArgumentError PE._run_args(ex, ["effect" => [[1, 2, NaN]]], Pair{String,String}[])
+    resp = PE.routes(ex)(HTTP.Request("GET", "/api/tables/power"))
+    @test resp.status == 200 && JSON3.read(resp.body).y[1] == [1, 2, 3, 4]
+end
