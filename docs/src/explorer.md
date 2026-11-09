@@ -156,6 +156,122 @@ plots, kept in `assets/vendor/`: the page loads nothing from other sites.
 The page asks the server for everything at `/api/…` (the model, runs,
 series, jobs, analyses, uploads, users).
 
+## The API
+
+Everything the page does goes through an HTTP API at `/api/…`, which
+scripts can use as well: start runs and analyses, wait for them, read their
+results.  Requests and answers are JSON, unless said otherwise.
+
+### Logging in
+
+- **On your computer** (`users = :local`): no login; every request is the
+  local user's.
+- **With the explorer's own logins** (`users = :password`): `POST
+  /api/login` with `{"user": …, "password": …}` sets a session cookie that
+  the next requests carry (a script keeps it, as a browser does).  Every
+  request that changes something (`POST`, `PUT`, `PATCH`, `DELETE`) carries
+  the header `X-PySD-Request: 1` too, or it is refused: another site's page
+  can't send it.  A session ends after 14 days without use.
+- **Behind a proxy that logs people in** (`users = :header`): the proxy sets
+  the user in `X-PySD-User`.
+
+A script has the same rights and limits as its user on the page: runs kept,
+jobs waiting at once, and so on (`GET /api/me` says which).
+
+Errors are `{"error": "…"}` with the status: 400 (a request that can't be
+done, the message says why), 401 (log in first), 403 (not allowed), 404
+(not found, or not yours to see).
+
+### Runs
+
+| request | what it does |
+|:---|:---|
+| `GET /api/model` | the model: its names (title, set, kind, unit, description, limits, dimensions and elements, the value in the model of each parameter, `table: true` for a table), its time and input sheets |
+| `GET /api/inputs` | for each input sheet, the sheets that can replace it: `[{id, label}, …]`, the first the model's own |
+| `GET /api/tables/{name}` | a table's `x` and `y` in the model, a list per element (`elements` their labels) |
+| `POST /api/runs` | a run: `{"label": …, "params": {…}, "inputs": {…}}`; answers its job |
+| `GET /api/runs` | the runs you see: id, label, owner, shared, created, params, inputs, seconds |
+| `GET /api/runs/{id}/csv` | its results as CSV (text): a row per name or element, a column per time, after a line with its label and changes |
+| `GET /api/series?name=…&runs=id1,id2` | a name's values in some runs: `time`, `elements`, and for each run a list per element |
+| `PATCH /api/runs/{id}` | `{"label": …}` or `{"shared": true}` |
+| `DELETE /api/runs/{id}` | deletes it |
+
+In `params`, a number for a parameter (`"tax": 30`), a list for an array
+(in the order of `GET /api/model`'s elements, the first dimension slowest),
+and for a table a list of values per element, over the same `x` as `GET
+/api/tables/{name}` (`[[…], […]]`; one list for a table without
+dimensions).  In `inputs`, an input sheet's name and the `id` of the sheet
+to use instead.
+
+### Jobs
+
+A run or an analysis waits for a simulation slot: `POST` answers its job,
+`{id, kind, label, status, progress, position, message, result, …}`.
+
+| request | what it does |
+|:---|:---|
+| `GET /api/jobs/{id}` | the job now: `status` is `queued` (its `position` in the queue), `running` (`progress` from 0 to 1), `done` (`result` is the run's or analysis' id), `failed` (`message` says why) or `cancelled` |
+| `GET /api/jobs` | your jobs (all, for administrators) |
+| `DELETE /api/jobs/{id}` | cancels it |
+
+### Sensitivity, uploads, views
+
+| request | what it does |
+|:---|:---|
+| `POST /api/analyses` | `{"label", "around" (a run's id, or "" for the model), "params": [names], "outputs": [names], "step": 0.01, "years": false}`; answers its job |
+| `GET /api/analyses`, `GET /api/analyses/{id}` | the analyses you see; one with its table (`rows`: a parameter each, the elasticity of each output) |
+| `PATCH`, `DELETE /api/analyses/{id}` | as for runs |
+| `POST /api/uploads?replaces=scen_w&label=…` | an `.xlsx` file (the request's body, as bytes) to replace the model's `scen_w.xlsx` |
+| `GET /api/uploads`, `PATCH`, `DELETE /api/uploads/{id}` | your uploads (and shared ones), the model's files; share, rename, delete |
+| `GET`, `POST /api/views`, `DELETE /api/views/{name}` | your saved views |
+| `GET /api/code`, `GET /api/code/{id}` | the model's files, one file's text (when users may see the code) |
+| `POST /api/password` | `{"current": …, "new": …}` |
+| `GET /api/admin`, `PUT /api/admin/settings`, `/api/admin/users…` | the Admin tab's, for administrators |
+
+### An example
+
+A run with a parameter and a table changed, its results as CSV, in Python:
+
+```python
+import requests, time
+
+api = "https://myexplorer.duckdns.org/api/"
+s = requests.Session()
+s.headers["X-PySD-Request"] = "1"
+s.post(api + "login", json={"user": "laia", "password": "…"}).raise_for_status()
+
+t = s.get(api + "tables/p_power").json()                 # a table of the model
+k = t["elements"].index("solar_pv")
+y = t["y"]
+y[k] = [v * 1.2 if x >= 2030 else v for x, v in zip(t["x"][k], y[k])]
+
+job = s.post(api + "runs", json={"label": "Solar +20 % from 2030",
+                                 "params": {"p_power": y, "tax": 30}}).json()
+while job["status"] in ("queued", "running"):
+    time.sleep(2)
+    job = s.get(api + "jobs/" + job["id"]).json()
+assert job["status"] == "done", job["message"]
+open("solar.csv", "w").write(s.get(api + f"runs/{job['result']}/csv").text)
+```
+
+And in Julia:
+
+```julia
+using HTTP, JSON3
+api = "https://myexplorer.duckdns.org/api/"
+h = ["X-PySD-Request" => "1", "Content-Type" => "application/json"]
+call(method, path, body = nothing) =
+    JSON3.read(HTTP.request(method, api * path, h, body === nothing ? "" : JSON3.write(body)).body)
+
+call("POST", "login", (; user = "laia", password = "…"))     # HTTP.jl keeps the cookie
+job = call("POST", "runs", (; label = "Tax 30", params = (; tax = 30)))
+while job.status in ("queued", "running")
+    sleep(2)
+    global job = call("GET", "jobs/" * job.id)
+end
+write("tax.csv", HTTP.get(api * "runs/$(job.result)/csv").body)
+```
+
 ## Safety
 
 Anyone who can log in can run the model on the server, within the
