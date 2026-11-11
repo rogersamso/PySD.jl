@@ -4,6 +4,36 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## 0.12.0 (2026-11-11)
+
+### Added
+
+- **PySDExplorer for several people**: `serve(model; users = :password)`
+  with the explorer's own logins (salted PBKDF2-SHA256 password hashes,
+  session cookies, failed logins blocked for a while); administrators
+  manage users and limits in an **Admin** tab.  Runs, analyses and uploads
+  are private until shared.  `users = :header` takes the user from a proxy.
+- A queue of simulations: runs and analyses wait for one of the slots the
+  administrators set; the page shows their place and progress.
+- Sensitivity analyses started from the page, around any run.
+- Uploads: a user's own version of one of the model's Excel files, whose
+  sheets can then replace the model's in a run.
+- Tables: lookups and data series can be edited in a run, new values over
+  the same x (typed, or a stretch changed by a percentage).
+- Each run's complete results as CSV; arrays picked a dimension at a time
+  in the plots; resizable columns.
+- `explorer/deploy/`: a Docker image and a Docker Compose setup with Caddy
+  (HTTPS) for a server.
+- Docs: "Exploring a model in the browser" (on your computer, for several
+  people, on a server), with the explorer's HTTP API.
+
+### Changed
+
+- PySDExplorer's `serve` defaults are unchanged (one person, on
+  `127.0.0.1:8080`); its data folder gains `users.json`, `sessions.json`,
+  `settings.json` and `inputs/` when those features are used.  Runs saved
+  by 0.11.0 open as everyone's.
+
 ## 0.11.0 (2026-11-08)
 
 ### Added

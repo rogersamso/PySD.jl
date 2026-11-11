@@ -1,6 +1,6 @@
 name = "PySDExplorer"
 uuid = "f470568b-339e-4846-9403-c8a1cf7ef471"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Roger Samsó"]
 
 [deps]

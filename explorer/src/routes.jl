@@ -14,7 +14,9 @@ function _asset(req)
     occursin("..", path) && return HTTP.Response(404)
     f = joinpath(ASSETS, path)
     isfile(f) || return HTTP.Response(404)
-    return HTTP.Response(200, ["Content-Type" => get(TYPES, splitext(f)[2], "application/octet-stream")], read(f))
+    # (no-cache: the browser checks for a newer page after an update, rather than keeping the old one)
+    return HTTP.Response(200, ["Content-Type" => get(TYPES, splitext(f)[2], "application/octet-stream"),
+                               "Cache-Control" => "no-cache"], read(f))
 end
 
 _query(req) = HTTP.queryparams(HTTP.URI(req.target))
