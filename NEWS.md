@@ -4,6 +4,17 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## Unreleased
+
+### Added
+
+- PySDExplorer: a run's scenario as Excel files (**Excel** in the Runs tab,
+  `GET /api/runs/{id}/excel`): copies of the workbooks it read, with its
+  values and tables in the cells the model reads them from, and
+  `changes.csv`, what went where and what is written in the model's code
+  instead.  They run the same scenario in the explorer (uploaded), in
+  Python PySD or in Vensim.
+
 ## 0.12.0 (2026-11-11)
 
 ### Added

@@ -721,6 +721,9 @@ function renderRunsTable() {
         el("button", { class: "ghost", title: "Start a new run from this one's changes", onclick: () => editFrom(r) }, "Edit copy"),
         el("a", { class: "button ghost", href: "api/runs/" + encodeURIComponent(r.id) + "/csv", download: "",
           title: "All its results, a row per name (or element), a column per time" }, "CSV"),
+        Object.keys(r.params || {}).length ? el("button", { class: "ghost",
+          title: "Its scenario: copies of the Excel files it read, with its values in their cells (a .zip)",
+          onclick: (e) => exportExcel(r, e.currentTarget) }, "Excel") : null,
         own && r.owner !== "" ? el("button", { class: "ghost", title: r.shared ? "Only you will see it" : "Everyone will see it",
           onclick: () => changeRun(r, { shared: !r.shared }) }, r.shared ? "Unshare" : "Share") : null,
         own ? el("button", { class: "ghost", title: "Rename", onclick: () => renameRun(r) }, "Rename") : null,
@@ -736,6 +739,22 @@ function editFrom(r) {
   S.inputs = { ...(r.inputs || {}) };
   $("#run-label").value = r.label + " (copy)";
   renderInputs(); renderParams(); renderChanged();
+}
+// a run's scenario as Excel files (a zip from the server; an error as a message)
+async function exportExcel(r, button) {
+  button.disabled = true;
+  toast("Writing the Excel files…", 60000);
+  try {
+    const res = await fetch("api/runs/" + encodeURIComponent(r.id) + "/excel", { headers: { "X-PySD-Request": "1" } });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      if (res.status === 401 && j.login) { showLogin(); throw new Error("Log in first."); }
+      throw new Error(j.error || res.statusText);
+    }
+    download(fileName(r.label) + ".zip", await res.blob());
+    toast("Downloaded: see changes.csv in the zip for what went where.");
+  } catch (e) { toast(e.message); }
+  finally { button.disabled = false; }
 }
 async function renameRun(r) {
   const label = prompt("New name:", r.label);

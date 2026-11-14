@@ -19,6 +19,8 @@ A web page to explore a PySD.jl model in the browser:
 - **Export** a plot or the whole page as PNG or SVG (screen, slide or A4 size,
   with a caption of the runs and their changes), the plotted data as CSV, or
   one HTML file with the plots and runs that opens anywhere without a server.
+  A run's results as CSV, and its scenario as Excel files: copies of the
+  model's workbooks with the run's values in their cells.
 - **Saved views**: the plots, runs and settings on screen, by name.
 
 ## Three ways to run it

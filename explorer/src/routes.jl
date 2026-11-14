@@ -94,6 +94,11 @@ function routes(ex::Explorer)
         HTTP.Response(200, ["Content-Type" => "text/csv; charset=utf-8", "Cache-Control" => "no-store",
                             "Content-Disposition" => "attachment; filename=\"$(name).csv\""], csv)
     end)
+    on("GET", "/api/runs/{id}/excel", (req, u) -> begin
+        name, bytes = run_excel(ex, u, _param(req, "id"))
+        HTTP.Response(200, ["Content-Type" => "application/zip", "Cache-Control" => "no-store",
+                            "Content-Disposition" => "attachment; filename=\"$name\""], bytes)
+    end)
     on("GET", "/api/series", (req, u) -> begin
         q = _query(req)
         _json_response(series(ex, u, q["name"], split(get(q, "runs", ""), ','; keepempty = false)))

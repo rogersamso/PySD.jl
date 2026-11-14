@@ -168,22 +168,33 @@ function _xlsx_split_ref(ref::String)
 end
 
 """
+    _range_ref(path, sheet, name) -> (sheet, r1, c1, r2, c2)
+
+Where a cell (`"B2"`), a cell range (`"B2:D5"`) or a named range (`.xlsx`
+only) is: its sheet (a named range may point to another one) and its corners.
+"""
+function _range_ref(path::String, sheet::String, name::String)
+    parts = split(name, ':')
+    if all(_xlsx_is_cell_ref, parts) && length(parts) <= 2 && !_is_defined_name(path, name)
+        r1, c1 = _parse_cell(parts[1])
+        r2, c2 = length(parts) == 2 ? _parse_cell(parts[2]) : (r1, c1)
+        return sheet, r1, c1, r2, c2
+    end
+    _is_xlsx(path) || error("Named range '" * name * "' in " * path *
+                            ": named ranges are only supported in .xlsx files")
+    sname, cells = _xlsx_split_ref(_xlsx_resolve_range(_xlsx_open(path), sheet, name))
+    return _range_ref(path, String(strip(sname, '\'')), cells)
+end
+
+"""
     _read_range(path, sheet, name)
 
 Cells of a cell (`"B2"`), a cell range (`"B2:D5"`) or a named range (`.xlsx` only),
 as a Matrix.
 """
 function _read_range(path::String, sheet::String, name::String)
-    parts = split(name, ':')
-    if all(_xlsx_is_cell_ref, parts) && length(parts) <= 2 && !_is_defined_name(path, name)
-        r1, c1 = _parse_cell(parts[1])
-        r2, c2 = length(parts) == 2 ? _parse_cell(parts[2]) : (r1, c1)
-        return _cells(_open_sheet(path, sheet), r1, c1, r2, c2)
-    end
-    _is_xlsx(path) || error("Named range '" * name * "' in " * path *
-                            ": named ranges are only supported in .xlsx files")
-    sname, cells = _xlsx_split_ref(_xlsx_resolve_range(_xlsx_open(path), sheet, name))
-    return _read_range(path, String(strip(sname, '\'')), cells)
+    s, r1, c1, r2, c2 = _range_ref(path, sheet, name)
+    return _cells(_open_sheet(path, s), r1, c1, r2, c2)
 end
 
 _is_blank(v) = v === nothing || ismissing(v) || (v isa AbstractString && isempty(v))
@@ -215,8 +226,7 @@ function _one_point_constant(xs::AbstractVector, ys::AbstractVecOrMat)
 end
 
 function _clean_series(xs::AbstractVector, ys::AbstractVecOrMat, method::Symbol=:interpolate)
-    keep = findall(!isnan, xs)
-    order = keep[sortperm(xs[keep])]
+    order = _series_order(xs)
     xs_c = Float64.(xs[order])
     ys_c = ys isa AbstractVector ? Float64.(ys[order]) : Float64.(ys[:, order])
     xs_c, ys_c = _one_point_constant(xs_c, ys_c)
@@ -231,6 +241,12 @@ function _clean_series(xs::AbstractVector, ys::AbstractVecOrMat, method::Symbol=
         end
     end
     return xs_c, ys_c
+end
+
+# the points a series keeps, in the order it keeps them: those with an x, by x
+function _series_order(xs::AbstractVector)
+    keep = findall(!isnan, xs)
+    return keep[sortperm(xs[keep])]
 end
 
 function _fill_missing!(ys::AbstractVector, xs::AbstractVector, method::Symbol)
@@ -427,4 +443,61 @@ function pysd_xlsx_read_series(path::String, sheet::String,
         ys = _to_float64_vec(y_data)
     end
     return length(ys) == n ? _clean_series(xs, ys) : (xs, ys)
+end
+
+# --- where the values are: the cells the readers above read, to write them back -----------
+
+"""
+    _constant_cells(path, sheet, name; transpose = false) -> (sheet, cells)
+
+Where `pysd_xlsx_read_constant(path, sheet, name; transpose)` reads its
+values: the sheet and a Matrix of `CartesianIndex(row, column)`, arranged as
+the values it reads (transposed with `transpose`).  The value of a variable
+over dimensions of size `sz` is `reshape(values, sz)` (see `_over`), so a new
+value `A` goes to `cells` as `reshape(A, size(cells))`.
+"""
+function _constant_cells(path::String, sheet::String, name::String; transpose::Bool=false)
+    s, r1, c1, r2, c2 = _range_ref(path, sheet, name)
+    cells = [CartesianIndex(r, c) for r in r1:r2, c in c1:c2]
+    return s, transpose ? permutedims(cells) : cells
+end
+
+"""
+    _series_cells(path, sheet, x_name, y_name; n = 1) -> (sheet, xs, cells)
+
+Where `pysd_xlsx_build_lookup_dispatch(path, sheet, x_name, y_name; n)` reads
+its series: the sheet of the y values, the x values as they are in the file
+(before `_clean_series` drops those that are blank and sorts them), and for
+each series the `CartesianIndex(row, column)` of its y value at each of those
+x.  The series' points are those at `_series_order(xs)`.
+"""
+function _series_cells(path::String, sheet::String, x_name::String, y_name::String; n::Int=1)
+    if _is_row_or_col(path, x_name, y_name)
+        s = _open_sheet(path, sheet)
+        nr, nc = _lastcell(s)
+        y_row, y_col = _parse_cell(y_name)
+        if all(isdigit, x_name)
+            x_raw = vec(_cells(s, parse(Int, x_name), y_col, parse(Int, x_name), max(nc, y_col)))
+            m = something(findlast(!_is_blank, x_raw), 0)
+            cells = [[CartesianIndex(y_row + k - 1, y_col + j - 1) for j in 1:m] for k in 1:n]
+        else
+            x_raw = vec(_cells(s, y_row, _xlsx_col_to_num(x_name), max(nr, y_row), _xlsx_col_to_num(x_name)))
+            m = something(findlast(!_is_blank, x_raw), 0)
+            cells = [[CartesianIndex(y_row + i - 1, y_col + k - 1) for i in 1:m] for k in 1:n]
+        end
+        return sheet, Float64[_to_float(x_raw[i]) for i in 1:m], cells
+    end
+    x_data = _read_range(path, sheet, x_name)
+    xs = _to_float64_vec(x_data)
+    s, r1, c1, r2, c2 = _range_ref(path, sheet, y_name)
+    nr, nc = r2 - r1 + 1, c2 - c1 + 1
+    at(i, j) = CartesianIndex(r1 + i - 1, c1 + j - 1)
+    # (the same choice as pysd_xlsx_build_lookup_dispatch)
+    x_in_row = size(x_data, 1) == 1 && size(x_data, 2) > 1
+    if nc == length(xs) && nr > 1 && (x_in_row || nr != length(xs))
+        return s, xs, [[at(i, j) for j in 1:nc] for i in 1:nr]
+    elseif nr == length(xs) && nc > 1
+        return s, xs, [[at(i, j) for i in 1:nr] for j in 1:nc]
+    end
+    return s, xs, [vec([at(i, j) for i in 1:nr, j in 1:nc])]
 end

@@ -308,6 +308,26 @@ end
     sq = pysd_xlsx_build_lookup_dispatch(xl, "Data", "xs_row", "ys_square"; n=2)
     @test sq[1](0.5) ≈ 1.5 && sq[2](0.5) ≈ 15.0
     @test pysd_xlsx_read_constant(xl, "Data", "text_param") == 0.1
+
+    # where they are: the values at the cells the readers say are those they read
+    ws = PySD.XLSX.readxlsx(xl)["Data"]
+    at(c) = PySD._to_float(ws[c[1], c[2]])
+    for (name, tr) in [("B2", false), ("scalar_param", false), ("local_param", false), ("row_param", false),
+                       ("col_param", false), ("mat_param", false), ("mat_param", true), ("B6:D7", true)]
+        s, cells = PySD._constant_cells(xl, "Data", name; transpose = tr)
+        v = pysd_xlsx_read_constant(xl, "Data", name; transpose = tr)
+        @test s == "Data" && vec(at.(cells)) == vec([v;;])
+    end
+    @test last(PySD._constant_cells(xl, "Data", "local_param")) == [CartesianIndex(2, 3);;]
+    for (x, y, n) in [("10", "B11", 1), ("H", "I2", 2), ("xs", "ys", 1), ("xs", "ys2", 1), ("xs_row", "ys_square", 2)]
+        s, xs, cells = PySD._series_cells(xl, "Data", x, y; n)
+        fns = pysd_xlsx_build_lookup_dispatch(xl, "Data", x, y; n)
+        @test length(cells) == length(fns)
+        for (f, cs) in zip(fns, cells)
+            order = PySD._series_order(xs)
+            @test f.t == xs[order] && f.u == at.(cs[order])
+        end
+    end
 end
 
 if HAS_TEST_MODELS

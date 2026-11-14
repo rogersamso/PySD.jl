@@ -442,3 +442,92 @@ end
     resp = PE.routes(ex)(HTTP.Request("GET", "/api/tables/power"))
     @test resp.status == 200 && JSON3.read(resp.body).y[1] == [1, 2, 3, 4]
 end
+
+@testset "explorer, a run's scenario as Excel files" begin
+    xd = mktempdir()
+    file = joinpath(xd, "scen.xlsx")
+    X = PE.XLSX
+    X.writetable(file, "Scen" => (; a = [missing]); overwrite = true)
+    X.openxlsx(file; mode = "rw") do xf
+        ws = xf["Scen"]
+        ws["B1"] = 0.05                                    # rate (a named range)
+        ws["B3"] = 1.0; ws["C3"] = 2.0; ws["B4"] = 3.0; ws["C4"] = 4.0    # a 2×2 block
+        ws["B5"] = 1.5; ws["C5"] = 2.5; ws["B6"] = 3.5; ws["C6"] = 4.5    # read transposed
+        ws["D3"] = 100.0; ws["D4"] = 90.0                  # a column, one per region
+        ws["G1"] = 0.1; ws["G2"] = 0.2                     # one cell per region
+        ws["F1"] = 7.0                                     # (a formula below)
+        for (j, x) in enumerate([0.0, 1, 2, 4])            # a lookup: x in row 8, a series per row
+            ws[8, 1 + j] = x; ws[9, 1 + j] = j; ws[10, 1 + j] = 10j
+        end
+        for (i, (t, v)) in enumerate(zip([4.0, 0, 2], [40.0, 0, 20]))   # data by column, not sorted by time
+            ws[i + 1, 8] = t; ws[i + 1, 9] = v
+        end
+        X.addDefinedName(xf, "rate", "Scen!\$B\$1")
+        X.addDefinedName(xf, "mat", "Scen!\$B\$3:\$C\$4")
+        X.addDefinedName(xf, "years", "Scen!\$B\$8:\$E\$8")
+        X.addDefinedName(xf, "power_values", "Scen!\$B\$9:\$E\$10")
+    end
+    X.openxlsx(file; mode = "rw") do xf
+        X.setFormula(xf["Scen"], "F2", "=F1*2")
+    end
+    kind = Dim{:kind}([:a, :b])
+    eqs = @equations(begin
+        @parameters begin
+            rate = constant(scen, "rate"), [unit = NoUnits]
+            mat[region, kind] = constant(scen, "mat"), [unit = NoUnits]
+            matt[region, kind] = constant(scen, "B5:C6"; transpose = true), [unit = NoUnits]
+            start[region] = constant(scen, "D3:D4"), [unit = NoUnits]
+            growth[region] = [constant(scen, "G1"), constant(scen, "G2")], [unit = NoUnits]
+            doubled = constant(scen, "F2"), [unit = NoUnits]
+            power[region] = lookup(scen, "years", "power_values"), [unit = NoUnits]
+            history = data(scen, "H", "I2"), [unit = NoUnits]
+            k = 2, [unit = NoUnits]
+        end
+        @variables begin
+            stock(t)[region], [unit = NoUnits]
+            y(t)[region], [unit = NoUnits]
+        end
+        ∂t(stock) ~ rate * stock + growth + k + sum_over(mat, kind) - sum_over(matt, kind) + history(t)
+        stock(t₀) ~ start
+        y ~ power(t)
+    end)
+    m = Model(eqs; time = 0:1:4, time_unit = u"s", inputs = (; scen = PySD.excel(file, "Scen")))
+    dir = mktempdir()
+    ex = PE.explorer(m; dir)
+    @test sort!(collect(keys(ex.tables))) == [:history, :power]
+    params = ["rate" => 0.07, "mat" => [1, 2, 30, 40], "matt" => [5, 6, 7, 8], "start" => [50, 60], "growth" => [0.3, 0.4],
+              "doubled" => 3, "k" => 5, "power" => [[1, 2, 3, 4], [5, 6, 7, 8]], "history" => [[0, 25, 45]]]
+    job = finish(ex, PE.submit_run!(ex, "local", "Scenario A", params, Pair{String,String}[]))
+    @test job.status === :done
+    r = ex.runs[job.result]
+    name, bytes = PE.run_excel(ex, "local", r.meta["id"])
+    @test name == "Scenario A.zip"
+    zr = PE.ZipArchives.ZipReader(bytes)
+    @test sort!(PE.ZipArchives.zip_names(zr)) == ["README.txt", "changes.csv", "scen.xlsx"]
+    changes = String(PE.ZipArchives.zip_readentry(zr, "changes.csv"))
+    @test occursin("k,k,,,,5,\"not written: written in the model's code", changes)
+    @test occursin(r"doubled,.*formula replaced: F2 was =F1\*2", changes)
+    @test occursin("mat,mat,,scen.xlsx,Scen › B3:C4,", changes)
+    @test occursin("growth,growth,,scen.xlsx,Scen › G1:G2,0.3 0.4,\n", changes)
+    # the model, from the exported file and with only the code's change, runs the same scenario
+    out = joinpath(mktempdir(), "scen.xlsx")
+    write(out, PE.ZipArchives.zip_readentry(zr, "scen.xlsx"))
+    m2 = Model(eqs; time = 0:1:4, time_unit = u"s", inputs = (; scen = PySD.excel(out, "Scen")))
+    r2 = run_model(m2; params = (; k = 5))
+    for n in (:rate, :mat, :matt, :start, :growth, :doubled)
+        @test getfield(r2.par, m2.byname[n].id) == getfield(PE._simulate(ex, PE._run_args(ex, params, Pair{String,String}[])[1:2]...).par, m.byname[n].id)
+    end
+    cols = PySD.Tables.columns(r2)
+    for (j, c) in enumerate(r.columns)
+        @test r.data[:, j] ≈ Float64.(PySD.Tables.getcolumn(cols, Symbol(c))) atol = 1e-12
+    end
+    # the workbook is otherwise the same: its names, the formula it didn't touch
+    x2 = X.readxlsx(out)
+    @test x2["Scen"]["F1"] == 7.0 && x2["Scen"]["A1"] == "a"
+    @test Set(keys(x2.workbook.workbook_names)) == Set(["rate", "mat", "years", "power_values"])
+    # nothing to export, and not someone else's run
+    base = only(r for r in values(ex.runs) if r.meta["label"] == "Base")
+    @test_throws ArgumentError PE.run_excel(ex, "local", base.meta["id"])
+    resp = PE.routes(ex)(HTTP.Request("GET", "/api/runs/$(r.meta["id"])/excel"))
+    @test resp.status == 200 && HTTP.header(resp, "Content-Type") == "application/zip"
+end

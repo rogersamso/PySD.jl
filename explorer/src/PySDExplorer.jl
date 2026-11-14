@@ -3,7 +3,7 @@
 
 A web page to explore a PySD.jl model: its names by set (module), with their
 units and descriptions; runs with other parameter values or input sheets,
-kept on disk and compared; sensitivity analyses; the model's code; figures
+kept on disk and compared, their scenarios exported as Excel files; sensitivity analyses; the model's code; figures
 and data exported.  On one computer (`users = :local`) or for several people
 behind a reverse proxy that checks their passwords (`users = :header`).
 
@@ -21,6 +21,7 @@ import PySD.XLSX as XLSX
 using DimensionalData
 using HTTP, JSON3, Dates, Sockets, Random
 import SHA
+import ZipArchives
 using Base64: base64encode, base64decode
 
 export serve, static_page
@@ -98,6 +99,7 @@ include("auth.jl")
 include("runs.jl")
 include("jobs.jl")
 include("uploads.jl")
+include("excel.jl")
 include("sensitivity.jl")
 include("static.jl")
 include("routes.jl")
