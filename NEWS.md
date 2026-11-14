@@ -4,6 +4,22 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## Unreleased
+
+### Changed
+
+- **ModelingToolkit 11 and Symbolics 7**: models translated by PySD's
+  ModelingToolkit backend run with ModelingToolkit 9, 10 and 11, and
+  Symbolics 6 and 7.
+- **Symbolics is no longer loaded by PySD.jl itself**.  It is a weak
+  dependency: what translated ModelingToolkit models need from it (the
+  helpers registered as black boxes, the `VECTOR` functions with symbolic
+  values) is in an extension, `PySDSymbolicsExt`, that loads with
+  ModelingToolkit or Symbolics.  Models written with `@equations` or
+  translated with `backend="dsl"` load PySD.jl without it, and PySD.jl
+  installs and precompiles much faster.  Code that reached Symbolics
+  through `PySD.Symbolics` loads it itself now (`using Symbolics`).
+
 ## 0.13.0 (2026-11-14)
 
 ### Added

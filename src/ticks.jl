@@ -224,14 +224,4 @@ function _truncexp(rng, b)
 end
 
 # In ModelingToolkit models (PySD's MTK backend) they are black boxes of the
-# time, registered with Symbolics: the record they read is one plain argument
-# (PySDRecord), as Symbolics adds a method for every combination of plain and
-# symbolic arguments.
-@register_symbolic pysd_fixed_delay(R::PySDRecord, init::Real, t::Real)
-@register_symbolic pysd_sampled(R::PySDRecord, condition::Real, x::Real, init::Real, t::Real)
-@register_symbolic pysd_tick_time(T::PySDTicks, t::Real)
-@register_symbolic pysd_tick_uniform(R::PySDRecord, t::Real)
-@register_symbolic pysd_tick_normal(R::PySDRecord, t::Real)
-@register_symbolic pysd_tick_exponential(R::PySDRecord, t::Real)
-@register_symbolic pysd_tick_normal(R::PySDRecord, a::Real, b::Real, t::Real) false
-@register_symbolic pysd_tick_exponential(R::PySDRecord, b::Real, t::Real) false
+# time, registered with Symbolics in ext/PySDSymbolicsExt.jl.
