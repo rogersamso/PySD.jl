@@ -2,8 +2,15 @@ using PySD
 using Test
 using Aqua
 using NCDatasets
+using Symbolics: Symbolics   # loads PySDSymbolicsExt (what MTK models need)
 
 const DATA = joinpath(@__DIR__, "data")
+
+# The number a symbolic expression takes at the given values.  Symbolics 7
+# folds the constants of a substitution only when asked (`fold`), 6 always.
+symbolic_at(e, vals::Pair...) = Symbolics.value(
+    pkgversion(Symbolics) >= v"7" ? Symbolics.substitute(e, Dict(vals...); fold = Val(true)) :
+                                    Symbolics.substitute(e, Dict(vals...)))
 
 # SDXorg/test-models (git submodule test/test-models, or PYSD_TEST_MODELS)
 const TEST_MODELS = get(ENV, "PYSD_TEST_MODELS", joinpath(@__DIR__, "test-models", "tests"))
@@ -59,16 +66,16 @@ end
     @test pysd_zidz(6.0, 1e-9) == 0.0
     @test pysd_xidz(6.0, -1e-9, 5.0) == 5.0
     # symbolic denominator: the test is part of the expression
-    PySD.Symbolics.@variables y_zidz
-    @test isequal(PySD.Symbolics.substitute(pysd_zidz(6.0, y_zidz), Dict(y_zidz => 0.0)), 0.0)
-    @test isequal(PySD.Symbolics.substitute(pysd_xidz(6.0, y_zidz, 5.0), Dict(y_zidz => 0.0)), 5.0)
-    @test isequal(PySD.Symbolics.substitute(pysd_xidz(6.0, y_zidz, 5.0), Dict(y_zidz => 3.0)), 2.0)
+    Symbolics.@variables y_zidz
+    @test symbolic_at(pysd_zidz(6.0, y_zidz), y_zidz => 0.0) == 0.0
+    @test symbolic_at(pysd_xidz(6.0, y_zidz, 5.0), y_zidz => 0.0) == 5.0
+    @test symbolic_at(pysd_xidz(6.0, y_zidz, 5.0), y_zidz => 3.0) == 2.0
     @test PySD._to_float(" 0.1 ") == 0.1
     @test isnan(PySD._to_float("Years"))
     @test PySD._trunc(2.7) == 2.0
     @test PySD._trunc(-2.7) == -2.0
-    PySD.Symbolics.@variables y_trunc
-    @test isequal(PySD.Symbolics.substitute(PySD._trunc(y_trunc), Dict(y_trunc => -2.7)), -2.0)
+    Symbolics.@variables y_trunc
+    @test symbolic_at(PySD._trunc(y_trunc), y_trunc => -2.7) == -2.0
     @test (@test_deprecated pysd_log_base(8.0, 2.0)) ≈ 3.0
     @test pysd_quantum(7.5, 2.0) == 6.0
     @test pysd_quantum(-7.5, 2.0) == -6.0
@@ -466,13 +473,55 @@ end
     @test pysd_xlsx_read_constant(xl, "NZP_old", "p_growth") == 0.13
 end
 
+# What models translated by PySD's ModelingToolkit backend call with symbolic
+# values (ext/PySDSymbolicsExt.jl)
+@testset "symbolic equations" begin
+    Symbolics.@variables a b
+    # black boxes in the equations, which the numbers go through when the model runs
+    for e in (pysd_power(a, b), pysd_quantum(a, b), pysd_random_uniform(a, b, 0),
+              pysd_inv_mat2d_elem([a 1.0; 2.0 b], 1, 2))
+        @test e isa Symbolics.Num
+        @test Symbolics.iscall(Symbolics.unwrap(e))
+    end
+    @test symbolic_at(pysd_power(a, b), a => 2.0, b => 3.0) == 8.0
+    @test symbolic_at(pysd_quantum(a, b), a => 7.5, b => 2.0) == 6.0
+    T = PySDTicks(0.0, 0.5)
+    @test pysd_tick_time(T, a) isa Symbolics.Num
+    @test pysd_fixed_delay(PySDRecord(T, 1, 0), b, a) isa Symbolics.Num
+    # VECTOR RANK, SORT ORDER, REORDER and SELECT as comparisons: the numbers of
+    # the plain functions once the values are known
+    Symbolics.@variables v[1:3]
+    vals = [3.0, 1.0, 3.0]
+    at(e) = symbolic_at(e, (v[i] => vals[i] for i in 1:3)...)
+    for dir in (1, -1)
+        @test at.(pysd_vector_rank(collect(v), dir)) == pysd_vector_rank(vals, dir)
+        @test at.(pysd_vector_sort_order(collect(v), dir)) == pysd_vector_sort_order(vals, dir)
+    end
+    @test at.(pysd_vector_reorder([10.0, 20.0, 30.0], collect(v) .- 1)) == [30.0, 10.0, 30.0]
+    @test at(pysd_vector_select([1, 0, 1], collect(v), -1.0, 0, 0)) == 6.0
+    @test symbolic_at(pysd_vector_select([1, 0, 1], [1.0, 2.0, 3.0], -1.0, a, 0), a => 9) == 3.0
+    # the DSL (and PySD by itself) don't load Symbolics
+    code = "using PySD; exit(isnothing(Base.get_extension(PySD, :PySDSymbolicsExt)) &&
+            !any(m -> nameof(m) === :Symbolics, values(Base.loaded_modules)) ? 0 : 1)"
+    @test success(`$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) -e $code`)
+end
+
 # no type piracy in the extensions the tests load either: their methods are on
 # PySD's own functions or types (ModelingToolkit isn't a test dependency, so
 # its extension isn't checked here)
 @testset "Aqua: extensions" begin
     own = [PySD.Model, PySD.Results, PySD.PySDTicks, PySD.run_model, PySD.save_results,
-           PySD.pysd_ticks_callback, PySD._latex_model]
-    for name in (:PySDSciMLBaseExt, :PySDLatexifyExt)
+           PySD.pysd_ticks_callback, PySD._latex_model,
+           # what the Symbolics extension registers or gives symbolic methods
+           PySD.PySDRecord, PySD._trunc, PySD._symbolic,
+           pysd_inv_mat2d_elem, pysd_inv_mat3d_elem, pysd_power, pysd_quantum,
+           pysd_random_0_1, pysd_random_uniform, pysd_random_normal, pysd_random_exponential,
+           pysd_vector_rank, pysd_vector_sort_order, pysd_vector_reorder,
+           pysd_fixed_delay, pysd_sampled, pysd_tick_time,
+           pysd_tick_uniform, pysd_tick_normal, pysd_tick_exponential]
+    # (registering a function adds methods of Symbolics' functions for its type)
+    own = [own; [typeof(f) for f in own if f isa Function]]
+    for name in (:PySDSciMLBaseExt, :PySDLatexifyExt, :PySDSymbolicsExt)
         ext = Base.get_extension(PySD, name)
         @test ext !== nothing
         ext === nothing || Aqua.test_piracies(ext; treat_as_own = own)
