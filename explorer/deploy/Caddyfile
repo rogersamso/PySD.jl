@@ -4,6 +4,19 @@
 	request_body {
 		max_size 210MB       # (the explorer's own limit, max_upload_mb, is lower)
 	}
+	# what browsers may do with the pages: HTTPS only (for a year), scripts,
+	# styles and data only from this site (Plotly sets inline styles, and
+	# images are saved through data: and blob: URLs), not inside other
+	# sites' frames, no guessing of file types, no address sent elsewhere
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		-Server
+	}
 	reverse_proxy explorer:8080
 	encode gzip
 }
