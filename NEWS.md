@@ -4,13 +4,14 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
-## Unreleased
+## 0.14.0 (2026-11-14)
 
 ### Changed
 
 - **ModelingToolkit 11 and Symbolics 7**: models translated by PySD's
   ModelingToolkit backend run with ModelingToolkit 9, 10 and 11, and
-  Symbolics 6 and 7.
+  Symbolics 6 and 7.  (PySD's translator now writes `System` and
+  `mtkcompile`, so the models it translates need ModelingToolkit 10 or 11.)
 - **Symbolics is no longer loaded by PySD.jl itself**.  It is a weak
   dependency: what translated ModelingToolkit models need from it (the
   helpers registered as black boxes, the `VECTOR` functions with symbolic
@@ -19,6 +20,14 @@ and the tests run before it.
   translated with `backend="dsl"` load PySD.jl without it, and PySD.jl
   installs and precompiles much faster.  Code that reached Symbolics
   through `PySD.Symbolics` loads it itself now (`using Symbolics`).
+
+### Fixed
+
+- `VECTOR SELECT` whose action changes during the run: the actions the model
+  doesn't take no longer throw (`expr ^ sel` with a negative value and a
+  fractional selection gives NaN, as numpy).
+- The ticks callbacks of SciML solvers use `derivative_discontinuity!` on
+  SciMLBase 3 (`u_modified!` on SciMLBase 2).
 
 ## 0.13.0 (2026-11-14)
 
