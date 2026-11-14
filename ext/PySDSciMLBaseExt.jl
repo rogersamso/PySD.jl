@@ -8,6 +8,11 @@ using PySD
 using PySD: Model, HistoryOperator
 import SciMLBase
 
+# Whether the rates change where a callback stops the solver: SciMLBase 3 names
+# it derivative_discontinuity! (u_modified! is deprecated there), 2 u_modified!
+const _derivative_discontinuity! = isdefined(SciMLBase, :derivative_discontinuity!) ?
+    SciMLBase.derivative_discontinuity! : SciMLBase.u_modified!
+
 """
     ODEProblem(model; params = (;), inputs = (;), kwargs...)
 
@@ -123,11 +128,11 @@ function _ticks_callback(m::Model)
             PySD._advance_all!(p)
         end
         p.clock.held = true                              # until the next tick
-        SciMLBase.u_modified!(integrator, true)          # the rates change at the tick
+        _derivative_discontinuity!(integrator, true)     # the rates change at the tick
     end
     function start!(c, u, t, integrator)
         _vensims(integrator, m) || _warn_stepwise(m, stepwise)
-        ticks || return SciMLBase.u_modified!(integrator, false)
+        ticks || return _derivative_discontinuity!(integrator, false)
         Base.invokelatest(m.init.f, integrator.p)       # the histories from the start
         du[] = similar(u)
         foreach(τ -> SciMLBase.add_tstop!(integrator, τ), _ticks(m))
@@ -271,7 +276,7 @@ function PySD.pysd_ticks_callback(T::PySD.PySDTicks, record!; t_final)
         PySD.pysd_begin_tick!(T, integrator.t)
         record!(integrator.u, integrator.t)
         PySD.pysd_end_tick!(T)                           # held until the next tick
-        SciMLBase.u_modified!(integrator, true)          # the rates change at the tick
+        _derivative_discontinuity!(integrator, true)     # the rates change at the tick
     end
     function start!(c, u, t, integrator)
         PySD.pysd_reset_ticks!(T)

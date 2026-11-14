@@ -8,7 +8,6 @@ using FunctionWrappers: FunctionWrapper
 using NCDatasets
 using Random
 using SpecialFunctions: erfc
-using Symbolics
 using XLSX
 using LibXLS
 using DelimitedFiles: readdlm

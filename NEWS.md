@@ -28,6 +28,17 @@ and the tests run before it.
 - PySDExplorer: each run keeps a record of the model that ran it (its files'
   SHA-256, the PySD.jl version), and an uploaded file can't be deleted while
   a run that read it is kept.
+- **ModelingToolkit 11 and Symbolics 7**: models translated by PySD's
+  ModelingToolkit backend run with ModelingToolkit 9, 10 and 11, and
+  Symbolics 6 and 7.
+- **Symbolics is no longer loaded by PySD.jl itself**.  It is a weak
+  dependency: what translated ModelingToolkit models need from it (the
+  helpers registered as black boxes, the `VECTOR` functions with symbolic
+  values) is in an extension, `PySDSymbolicsExt`, that loads with
+  ModelingToolkit or Symbolics.  Models written with `@equations` or
+  translated with `backend="dsl"` load PySD.jl without it, and PySD.jl
+  installs and precompiles much faster.  Code that reached Symbolics
+  through `PySD.Symbolics` loads it itself now (`using Symbolics`).
 
 ## 0.12.0 (2026-11-11)
 
