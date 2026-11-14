@@ -151,6 +151,7 @@ function _sheets(f)
 end
 
 _choice_id((f, s)) = f * "|" * s
+_split_choice(id) = (k = findlast('|', id); (id[1:prevind(id, k)], id[nextind(id, k):end]))
 _choice_label((f, s)) = basename(f) * " › " * s
 
 # ---------------------------------------------------------------------------

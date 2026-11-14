@@ -112,6 +112,16 @@ end
 
 function delete_upload!(ex::Explorer, user, id)
     u = _changeable_upload(ex, user, id)
+    # (a run that read it keeps it: what made its results stays on the server)
+    path = joinpath(_uploads_dir(ex), u["file"])
+    using_it = [r for r in values(ex.runs) if any(c -> first(_split_choice(c)) == path, values(r.meta["inputs"]))]
+    if !isempty(using_it)
+        seen = sort!(["\"$(r.meta["label"])\"" for r in using_it if visible(ex, user, r.meta)])
+        others = length(using_it) - length(seen)
+        throw(ArgumentError("runs read this file: " * join(seen, ", ") *
+                            (others == 0 ? "" : (isempty(seen) ? "" : " and ") * "$others of other people") *
+                            ". It stays while they do: delete those runs first (their Scenario download keeps a copy of it)"))
+    end
     lock(() -> delete!(ex.uploads, id), ex.lock)
     rm(joinpath(_uploads_dir(ex), u["file"]); force = true)
     rm(joinpath(_uploads_dir(ex), id * ".json"); force = true)

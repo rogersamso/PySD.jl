@@ -78,6 +78,11 @@
       <div class="runs-grid">
         <div class="card" id="new-run">
           <h2>New run</h2>
+          <div class="row static-hide">
+            <button id="scenario-load" class="ghost" title="A run's Scenario (or Excel) download: fill this form with it">Load a scenario…</button>
+            <input id="scenario-file" type="file" accept=".zip,application/zip" hidden>
+          </div>
+          <p id="scenario-notes" class="note" hidden></p>
           <label class="block">Name <input id="run-label" type="text" placeholder="e.g. High climate sensitivity"></label>
           <div id="inputs-box"></div>
           <details id="uploads-box" class="uploads static-hide">

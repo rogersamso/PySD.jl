@@ -365,8 +365,10 @@ end
     PE.update_settings!(ex, Dict("max_uploads_per_user" => 10, "max_upload_mb" => 1))
     @test_throws ArgumentError PE.upload!(ex, "ana", vcat(high, zeros(UInt8, 2^20)); replaces = "scen")
 
-    # kept on disk; deleting removes the file
+    # kept on disk; kept while a run read it; deleting removes the file
     @test length(PE.explorer(m; dir, users = :header).uploads) == 1
+    @test_throws ArgumentError PE.delete_upload!(ex, "ana", u["id"])
+    PE.delete_run!(ex, "ana", r.meta["id"])
     @test PE.delete_upload!(ex, "ana", u["id"])
     @test isempty(readdir(joinpath(dir, "inputs")))
 
@@ -503,7 +505,7 @@ end
     name, bytes = PE.run_excel(ex, "local", r.meta["id"])
     @test name == "Scenario A.zip"
     zr = PE.ZipArchives.ZipReader(bytes)
-    @test sort!(PE.ZipArchives.zip_names(zr)) == ["README.txt", "changes.csv", "scen.xlsx"]
+    @test sort!(PE.ZipArchives.zip_names(zr)) == ["README.txt", "changes.csv", "scen.xlsx", "scenario.json"]
     changes = String(PE.ZipArchives.zip_readentry(zr, "changes.csv"))
     @test occursin("k,k,,,,5,\"not written: written in the model's code", changes)
     @test occursin(r"doubled,.*formula replaced: F2 was =F1\*2", changes)
@@ -530,4 +532,106 @@ end
     @test_throws ArgumentError PE.run_excel(ex, "local", base.meta["id"])
     resp = PE.routes(ex)(HTTP.Request("GET", "/api/runs/$(r.meta["id"])/excel"))
     @test resp.status == 200 && HTTP.header(resp, "Content-Type") == "application/zip"
+end
+
+@testset "explorer, scenarios saved and loaded" begin
+    xd = mktempdir()
+    sheet(f, pairs...) = (PE.XLSX.writetable(joinpath(xd, f), [n => (; x = [v]) for (n, v) in pairs]...; overwrite = true);
+                          joinpath(xd, f))
+    own = sheet("scen.xlsx", "NZP" => 2.0, "BAU" => 3.0)
+    m = Model(@equations(begin
+        @parameters begin
+            k = constant(scen, "A2"), [unit = NoUnits]
+            c = 1, [unit = NoUnits]
+            v[region] = [1.0, 2.0], [unit = NoUnits]
+        end
+        @variables begin
+            y(t), [unit = NoUnits]
+        end
+        ∂t(y) ~ k * c + sum_over(v, region)
+        y(t₀) ~ 0
+    end); time = 0:1:4, time_unit = u"s", inputs = (; scen = PySD.excel(own, "NZP")))
+    dir = mktempdir()
+    ex = PE.explorer(m; dir, users = :header, input_dirs = [xd])     # (the model's other sheets to choose)
+    @test length(ex.record["fingerprint"]) == 64 && ex.record["files"]["scen.xlsx"] == PE._sha256(own)
+    high = read(sheet("scen_high.xlsx", "NZP" => 5.0)); rm(joinpath(xd, "scen_high.xlsx"))
+    u = PE.upload!(ex, "ana", high; replaces = "scen", label = "High")
+    upath = joinpath(dir, "inputs", u["file"])
+    params = ["c" => 2, "v" => [3, 4]]
+    job = finish(ex, PE.submit_run!(ex, "ana", "High, c 2", params, ["scen" => upath * "|NZP"]))
+    r = ex.runs[job.result]
+    @test r.meta["model"]["fingerprint"] == ex.record["fingerprint"]
+    @test !haskey(PE._public(r), "model")
+    y_end(ex, user, r) = PE.series(ex, user, "y", [r.meta["id"]])["runs"][r.meta["id"]][1][end]
+    @test y_end(ex, "ana", r) == 4 * (5 * 2 + 7)
+
+    # the scenario: what it changed, the sheet it read (the upload, in the zip), the model
+    name, bytes = PE.run_scenario(ex, "ana", r.meta["id"])
+    @test name == "High_ c 2 (scenario).zip"
+    zr = PE.ZipArchives.ZipReader(bytes)
+    @test sort!(PE.ZipArchives.zip_names(zr)) == ["README.txt", "scenario.json", "sheets/" * u["file"]]
+    s = JSON3.read(PE.ZipArchives.zip_readentry(zr, "scenario.json", String))
+    @test s.format == "pysd-explorer-scenario" && s.label == "High, c 2" && s.params.c == 2 && s.params.v == [3, 4]
+    @test s.inputs.scen.from == "upload" && s.inputs.scen.sheet == "NZP" && s.inputs.scen.label == "High"
+    @test s.inputs.scen.sha256 == PE._sha256(upath) && s.model.fingerprint == ex.record["fingerprint"]
+    @test PE.ZipArchives.zip_readentry(zr, "sheets/" * u["file"]) == high
+    # the upload stays while the run does
+    @test_throws ArgumentError PE.delete_upload!(ex, "ana", u["id"])
+
+    # loaded by her: her upload again, nothing to note; the same results
+    l = PE.load_scenario(ex, "ana", bytes)
+    @test l["label"] == "High, c 2" && l["params"] == Dict("c" => 2, "v" => [3, 4]) && isempty(l["notes"])
+    @test l["inputs"] == Dict("scen" => upath * "|NZP") && length(ex.uploads) == 1
+    again = ex.runs[finish(ex, PE.submit_run!(ex, "ana", "again", pairs(l["params"]), pairs(l["inputs"]))).result]
+    @test again.data == r.data
+
+    # by someone else: the workbook becomes his upload (once, for both runs)
+    l2 = PE.load_scenario(ex, "pere", bytes)
+    @test length(ex.uploads) == 2 && any(n -> occursin("uploaded", n), l2["notes"])
+    @test PE.load_scenario(ex, "pere", bytes)["inputs"] == l2["inputs"] && length(ex.uploads) == 2
+    his = ex.runs[finish(ex, PE.submit_run!(ex, "pere", "his", pairs(l2["params"]), pairs(l2["inputs"]))).result]
+    @test his.data == r.data
+
+    # a shared run, its upload private: the sheet left out, and said
+    PE.change_run!(ex, "ana", r.meta["id"], Dict(:shared => true))
+    _, b3 = PE.run_scenario(ex, "joan", r.meta["id"])
+    z3 = PE.ZipArchives.ZipReader(b3)
+    @test !any(startswith("sheets/"), PE.ZipArchives.zip_names(z3))
+    @test occursin("not shared with you", String(PE.ZipArchives.zip_readentry(z3, "README.txt")))
+    l3 = PE.load_scenario(ex, "joan", b3)
+    @test isempty(l3["inputs"]) && any(n -> occursin("isn't in the zip", n), l3["notes"])
+
+    # the model's own sheets; values that are no longer parameters; another model
+    job = finish(ex, PE.submit_run!(ex, "ana", "BAU", Pair{String,Any}[], ["scen" => abspath(own) * "|BAU"]))
+    _, b4 = PE.run_scenario(ex, "ana", job.result)
+    @test PE.load_scenario(ex, "joan", b4)["inputs"] == Dict("scen" => abspath(own) * "|BAU")
+    j4 = JSON3.read(PE.ZipArchives.zip_readentry(PE.ZipArchives.ZipReader(b4), "scenario.json", String))
+    @test j4.inputs.scen.from == "model" && j4.inputs.scen.file == "scen.xlsx"
+    notes = PE._compare_model!(String[], ex.record, Dict("fingerprint" => "x", "pysd" => "0.1.0",
+                               "files" => Dict("scen.xlsx" => "0", "old.jl" => "1")))
+    @test occursin("changed: scen.xlsx", notes[1]) && occursin("no longer there: old.jl", notes[1]) && occursin("0.1.0", notes[2])
+    @test occursin("doesn't record", only(PE._compare_model!(String[], ex.record, nothing)))
+    io = IOBuffer()
+    PE.ZipArchives.ZipWriter(io) do z
+        PE.ZipArchives.zip_writefile(z, "scenario.json", codeunits(JSON3.write(Dict("format" => "pysd-explorer-scenario",
+            "version" => 1, "label" => "Odd", "params" => Dict("c" => 3, "gone" => 1, "v" => [1]), "inputs" => Dict()))))
+    end
+    l5 = PE.load_scenario(ex, "ana", take!(io))
+    @test l5["params"] == Dict("c" => 3) && length(l5["notes"]) == 3      # (no model record, gone, v's size)
+
+    # not a scenario
+    @test_throws ArgumentError PE.load_scenario(ex, "ana", rand(UInt8, 100))
+    @test_throws ArgumentError PE.load_scenario(ex, "ana", high)            # (a zip, without scenario.json)
+
+    # the routes
+    router = PE.routes(ex)
+    resp = router(HTTP.Request("GET", "/api/runs/$(r.meta["id"])/scenario", ["X-PySD-User" => "ana"]))
+    @test resp.status == 200 && HTTP.header(resp, "Content-Type") == "application/zip"
+    resp = router(HTTP.Request("POST", "/api/scenario", ["X-PySD-User" => "ana"], bytes))
+    @test resp.status == 200 && JSON3.read(resp.body).label == "High, c 2"
+    @test router(HTTP.Request("POST", "/api/scenario", ["X-PySD-User" => "ana"], high)).status == 400
+
+    # deleting the runs that read it frees the upload
+    foreach(x -> PE.delete_run!(ex, "ana", x.meta["id"]), [r, again])
+    @test PE.delete_upload!(ex, "ana", u["id"])
 end

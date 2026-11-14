@@ -77,7 +77,7 @@ function _save!(ex::Explorer, r::Results; label, owner, shared, params = Dict{St
     meta = Dict{String,Any}("id" => id, "label" => label, "owner" => owner, "shared" => shared,
                             "created" => Dates.format(now(), "yyyy-mm-dd HH:MM"), "params" => params,
                             "inputs" => inputs, "seconds" => round(seconds; digits = 2), "time" => r.time,
-                            "columns" => names)
+                            "columns" => names, "model" => ex.record)
     base = joinpath(ex.dir, "runs", id)
     write(base * ".f64", data)
     open(io -> JSON3.write(io, meta), base * ".json", "w")
@@ -112,6 +112,7 @@ function _load(file)
     meta["time"] = Float64.(meta["time"])
     meta["params"] = Dict{String,Any}(String(k) => _kept(v) for (k, v) in meta["params"])
     meta["inputs"] = Dict{String,Any}(String(k) => String(v) for (k, v) in meta["inputs"])
+    haskey(meta, "model") && (meta["model"] = _plain(meta["model"]))     # (runs saved before: not recorded)
     # runs saved before there were users: everyone's
     meta["owner"] = String(get(meta, "owner", ""))
     meta["shared"] = get(meta, "shared", true) === true
@@ -129,7 +130,7 @@ function _run(meta, names, data)
     return Run(meta, names, index, data)
 end
 
-_public(r::Run) = Dict(k => v for (k, v) in r.meta if k != "columns" && k != "time")
+_public(r::Run) = Dict(k => v for (k, v) in r.meta if !(k in ("columns", "time", "model")))
 
 runs_info(ex::Explorer, user) =
     sort!([_public(r) for r in values(ex.runs) if visible(ex, user, r.meta)]; by = r -> r["id"])

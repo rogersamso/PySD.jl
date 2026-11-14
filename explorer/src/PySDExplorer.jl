@@ -3,7 +3,8 @@
 
 A web page to explore a PySD.jl model: its names by set (module), with their
 units and descriptions; runs with other parameter values or input sheets,
-kept on disk and compared, their scenarios exported as Excel files; sensitivity analyses; the model's code; figures
+kept on disk and compared, their scenarios saved as files (and loaded back)
+or exported as Excel files; sensitivity analyses; the model's code; figures
 and data exported.  On one computer (`users = :local`) or for several people
 behind a reverse proxy that checks their passwords (`users = :header`).
 
@@ -90,6 +91,7 @@ mutable struct Explorer
     failures::Dict{String,Vector{DateTime}}
     auth_mtime::Dict{String,Float64}
     secure_cookies::Bool
+    record::Dict{String,Any}             # the model as loaded: its files' SHA-256, PySD.jl's version (each run keeps it)
 end
 
 include("model.jl")
@@ -100,6 +102,7 @@ include("runs.jl")
 include("jobs.jl")
 include("uploads.jl")
 include("excel.jl")
+include("scenario.jl")
 include("sensitivity.jl")
 include("static.jl")
 include("routes.jl")
@@ -166,7 +169,7 @@ function explorer(model; dir = "explorer-data", title = "", input_dirs = String[
                   Auth(users, user_header, Set(String.(admins))), _load_settings(dir), Job[],
                   Threads.Condition(), 0, ReentrantLock(), Dict{String,String}(),
                   Dict{String,Dict{String,Any}}(), Dict{String,Dict{String,Any}}(), Dict{String,Vector{DateTime}}(),
-                  Dict{String,Float64}(), secure_cookies)
+                  Dict{String,Float64}(), secure_cookies, _model_record(title, m, code))
     users === :password && lock(() -> _refresh_auth!(ex), ex.lock)
     _load_runs!(ex)
     _load_analyses!(ex)

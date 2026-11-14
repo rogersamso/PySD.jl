@@ -99,6 +99,12 @@ function routes(ex::Explorer)
         HTTP.Response(200, ["Content-Type" => "application/zip", "Cache-Control" => "no-store",
                             "Content-Disposition" => "attachment; filename=\"$name\""], bytes)
     end)
+    on("GET", "/api/runs/{id}/scenario", (req, u) -> begin
+        name, bytes = run_scenario(ex, u, _param(req, "id"))
+        HTTP.Response(200, ["Content-Type" => "application/zip", "Cache-Control" => "no-store",
+                            "Content-Disposition" => "attachment; filename=\"$name\""], bytes)
+    end)
+    on("POST", "/api/scenario", (req, u) -> _json_response(load_scenario(ex, u, req.body)))
     on("GET", "/api/series", (req, u) -> begin
         q = _query(req)
         _json_response(series(ex, u, q["name"], split(get(q, "runs", ""), ','; keepempty = false)))

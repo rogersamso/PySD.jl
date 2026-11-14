@@ -52,8 +52,7 @@ function _run_sheet(ex::Explorer, user, r::Run, input::Symbol)
     own = ex.model.inputs[input]
     id = get(r.meta["inputs"], String(input), nothing)
     id === nothing && return (own.path, own.sheet, basename(own.path))
-    k = findlast('|', id)
-    f, s = id[1:prevind(id, k)], id[nextind(id, k):end]
+    f, s = _split_choice(id)
     choices, _ = input_choices(ex, user)
     any(c -> c == (f, s), get(choices, String(input), Tuple{String,String}[])) ||
         throw(_NoCells("it read a sheet you can't see ($s of a file uploaded by someone else, or deleted)"))
@@ -174,6 +173,7 @@ function run_excel(ex::Explorer, user, id)
             ZipArchives.zip_writefile(z, files[path], bytes)
         end
         ZipArchives.zip_writefile(z, "changes.csv", codeunits(_changes_csv(r, rows)))
+        _zip_scenario!(z, ex, user, r)              # (the record: load it again with "Load a scenario")
         ZipArchives.zip_writefile(z, "README.txt", codeunits(_excel_readme(ex, r)))
     end
     return replace(r.meta["label"], r"[^A-Za-z0-9_\- ]" => "_") * ".zip", take!(io)
@@ -263,5 +263,9 @@ function _excel_readme(ex::Explorer, r::Run)
     A cell that had a formula now has the value (changes.csv names it).  Other
     formulas keep the values they had: Excel computes them again when it
     opens the file, PySD and Vensim read them as they are.
+
+    scenario.json (with sheets/, the uploaded workbooks the run read, as they
+    were) is the explorer's record of the run: load this zip in the Runs tab
+    ("Load a scenario") to fill the New run form with it again.
     $(isempty(sheets) ? "" : "\nThe run read these sheets instead of the model's own:\n" * join(sheets, "\n") * "\n")"""
 end
