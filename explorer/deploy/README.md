@@ -17,7 +17,7 @@ The explorer itself isn't reachable from outside: only Caddy talks to it.
 | container | image | notes |
 |:---|:---|:---|
 | explorer | built here from `Dockerfile` (`julia:1.12` + PySD.jl, the explorer, DimensionalData, Unitful, precompiled; about 2.4 GB) | runs as the user `explorer`, not root |
-| caddy | `caddy:2.10`, as published | ports 80 and 443 |
+| caddy | `caddy:2` (the newest 2.x), as published | ports 80 and 443 |
 
 | where | what |
 |:---|:---|
@@ -96,6 +96,11 @@ model's code, and everyone's jobs.  Everyone can change their own password
   `docker compose up -d --build --force-recreate`.  (`--force-recreate`
   matters: Caddy's container mounts the file `Caddyfile`, and after
   `git pull` replaces that file a running container still sees the old one.)
+- **Security updates of the containers** (Caddy, and the Julia image the
+  explorer is built on; `unattended-upgrades` doesn't reach them): once a
+  month or so, `docker compose pull caddy && docker compose build --pull &&
+  docker compose up -d --force-recreate`.  The explorer is away while it
+  starts again (a few minutes with a large model).
 - **Back up**: the `explorer-data` volume (`docker run --rm -v deploy_explorer-data:/d -v $PWD:/b alpine tar czf /b/explorer-data.tgz -C /d .`).
 
 ## What people can do, and the limits
@@ -120,4 +125,8 @@ limits, their defaults and where they're kept are in the manual's "Limits".
 - Don't publish port 8080: the explorer's cookies are for HTTPS only, which
   Caddy provides.
 - Keep the server updated (`unattended-upgrades` on Ubuntu or Debian), and
-  allow SSH with keys only.
+  allow SSH with keys only, ideally only from the addresses you use (a
+  firewall in front of the server, e.g. your provider's).
+- The `Caddyfile` sets the browsers' security headers: HTTPS only (HSTS), a
+  Content-Security-Policy that lets the page load only its own scripts, no
+  framing by other sites.

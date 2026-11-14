@@ -19,7 +19,7 @@ services:
     mem_limit: ${MEMORY:-6g}
 
   caddy:
-    image: caddy:2.10
+    image: caddy:2                     # (the newest 2.x: `docker compose pull` brings its fixes)
     restart: unless-stopped
     ports:
       - "80:80"
