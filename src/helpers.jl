@@ -8,10 +8,10 @@
 # functions themselves are in PythonMath).
 const _CNum = Union{Float64,Int}
 
-# INTEGER: Julia's trunc, of which Symbolics has no method, so that models
-# translated for ModelingToolkit with pysd_trunc (deprecated) still build
+# INTEGER: Julia's trunc.  Models translated for ModelingToolkit with
+# pysd_trunc (deprecated) call it with symbolic values too: its method for
+# them is in ext/PySDSymbolicsExt.jl.
 _trunc(x) = trunc(x)
-_trunc(x::Num) = ifelse(x < 0, ceil(x), floor(x))
 
 # What Vensim considers zero.  Times accumulated by fixed Euler steps carry
 # rounding errors, so pulses start up to SMALL_VENSIM early (as in Python PySD).
@@ -151,18 +151,17 @@ pysd_sum_seq(itr) =
 _numpy_inv(m::AbstractMatrix) =
     LinearAlgebra.LAPACK.gesv!(Matrix{Float64}(m), Matrix{Float64}(LinearAlgebra.I, size(m)...))[1]
 
-# Registered as symbolic black boxes so Symbolics does not attempt symbolic
-# matrix algebra (which hangs for large matrices).  At solve time the
-# concrete array is passed and the inverse is computed numerically.
+# Registered as symbolic black boxes (ext/PySDSymbolicsExt.jl) so Symbolics
+# does not attempt symbolic matrix algebra (which hangs for large matrices).
+# At solve time the concrete array is passed and the inverse is computed
+# numerically.
 function pysd_inv_mat2d_elem(mat::AbstractMatrix, i::Int, j::Int)
     return _numpy_inv(mat)[i, j]
 end
-@register_symbolic pysd_inv_mat2d_elem(mat::AbstractMatrix, i::Int, j::Int)
 
 function pysd_inv_mat3d_elem(mat::AbstractArray, b::Int, i::Int, j::Int)
     return _numpy_inv(mat[b, :, :])[i, j]
 end
-@register_symbolic pysd_inv_mat3d_elem(mat::AbstractArray, b::Int, i::Int, j::Int)
 
 pysd_invert_matrix(m::AbstractArray, n) = vec(_numpy_inv(reshape(m, Int(n), Int(n))))
 pysd_invert_matrix(m, n) = m
@@ -171,7 +170,6 @@ pysd_invert_matrix(m, n) = m
 # exponent gives NaN (as numpy.power) instead of throwing a DomainError.
 pysd_power(x, y) = x < 0 && !isinteger(y) ? oftype(float(x) * y, NaN) : float(x)^y
 pysd_power(x::_CNum, y::_CNum) = _c_pow(Float64(x), Float64(y))
-@register_symbolic pysd_power(x::Real, y::Real)
 
 # An array whose elements outside its size read as undefined: NaN, as the
 # elements a model does not define in Python PySD (0 for other types).
@@ -195,7 +193,6 @@ pysd_safe(x::AbstractArray) = SafeArray(x)
 pysd_safe(x) = x
 
 pysd_quantum(a, b) = ifelse(b < 1e-6, float(a), b * trunc(a / b))
-@register_symbolic pysd_quantum(a::Real, b::Real)
 
 # XMILE variants: Xpulse has (start, magnitude), Xramp has (slope, start)
 # XMILE PULSE(magnitude, start[, interval]): `magnitude / time_step` during one
@@ -226,24 +223,21 @@ end
 pysd_xramp(t_now, slope, start_time) =
     slope * max(0.0, t_now - start_time)
 
-# Random functions — opaque wrappers so MTK calls them at every timestep
+# Random functions — opaque wrappers (registered in ext/PySDSymbolicsExt.jl)
+# so MTK calls them at every timestep
 pysd_random_0_1() = Base.rand()
-@register_symbolic pysd_random_0_1()
 
 pysd_random_uniform(lo, hi, _seed) = lo + (hi - lo) * Base.rand()
-@register_symbolic pysd_random_uniform(lo::Real, hi::Real, _seed::Real)
 
 function pysd_random_normal(lo, hi, mean, std, _seed)
     x = mean + std * Base.randn()
     return clamp(x, lo, hi)
 end
-@register_symbolic pysd_random_normal(lo::Real, hi::Real, mean::Real, std::Real, _seed::Real)
 
 function pysd_random_exponential(lo, hi, mean, _seed)
     x = lo + mean * Random.randexp()
     return clamp(x, lo, hi)
 end
-@register_symbolic pysd_random_exponential(lo::Real, hi::Real, mean::Real, _seed::Real)
 
 # Vector operations
 function pysd_vector_select(sel_vec, expr_vec, miss_val, action)
@@ -322,7 +316,7 @@ function _vector_select_symbolic(sel, expr, missing_vals, action)
         k in (3, 9) && return largest(v)
         return total(v) / count
     end
-    if action isa Num                     # an action that changes: all of them
+    if _symbolic(action)                  # an action that changes: all of them
         out = by_action(10)
         for k in 9:-1:0
             out = ifelse(action == k, by_action(k), out)
@@ -342,30 +336,9 @@ pysd_vector_rank(vec, dir) =
     Float64.(invperm(ifelse(dir > 0, sortperm(vec), sortperm(vec, rev=true))))
 
 # The same with symbolic values (ModelingToolkit builds its equations by
-# calling these with them): no sorting, which needs the values, but
-# comparisons, as ifelse.  The rank of element i counts the elements before it
-# in the order (smaller, or larger, and the equal ones before i: a stable sort,
-# as sortperm); n² comparisons, for the vectors of a model.
-_symbolic(x) = x isa Num || (x isa AbstractArray && eltype(x) <: Num)
-
-function pysd_vector_rank(vec::AbstractVector{Num}, dir)
-    v = collect(vec)
-    n = length(v)
-    before(i, j) = ifelse(dir > 0, v[j] < v[i], v[j] > v[i])
-    return [1 + sum((ifelse(before(i, j), 1, 0) + (j < i ? ifelse(v[j] == v[i], 1, 0) : 0)
-                     for j in 1:n if j != i); init = 0) for i in 1:n]
-end
-
-function pysd_vector_sort_order(vec::AbstractVector{Num}, dir)
-    r = pysd_vector_rank(vec, dir)
-    n = length(r)
-    return [sum(ifelse(r[i] == p, i - 1, 0) for i in 1:n) for p in 1:n]
-end
-
-function pysd_vector_reorder(vec::AbstractVector, order::AbstractVector{Num})
-    n = length(order)
-    return [sum(ifelse(order[p] == j - 1, vec[j], 0) for j in 1:n) for p in 1:n]
-end
+# calling these with them) are in ext/PySDSymbolicsExt.jl, which also says
+# which values are symbolic.
+_symbolic(x) = false
 
 pysd_get_time_value(t_now, lookup_fn, lo, hi) =
     lookup_fn(clamp(t_now, lo, hi))

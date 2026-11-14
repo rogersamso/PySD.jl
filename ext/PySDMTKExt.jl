@@ -7,7 +7,8 @@ using NCDatasets
 """
     save_results(sol, sys, dim_labels, path)
 
-MTK-backend variant.  `sys` is the `ODESystem`; variable names and ordering
+MTK-backend variant.  `sys` is the ModelingToolkit system (a `System`, an
+`ODESystem` before ModelingToolkit 10); variable names and ordering
 are introspected from `unknowns(sys)`.
 """
 function PySD.save_results(

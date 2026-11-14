@@ -65,6 +65,14 @@ that call these helpers, as do plain Julia ODE functions translated with its
 former `backend="ode"`.  Models written with `@equations`, or translated with
 `backend="dsl"`, don't need them.
 
+With symbolic values, as ModelingToolkit builds the equations, these helpers
+need Symbolics.  PySD.jl doesn't load it itself: loading ModelingToolkit
+(or Symbolics) loads PySD.jl's extension for it, which registers the helpers
+that are black boxes in the equations (the matrix inverse, `pysd_power`,
+the random draws, the fixed delays and samples) and gives the `VECTOR`
+functions their symbolic methods.  ModelingToolkit 9 to 11 (Symbolics 6
+and 7) work.
+
 ### Helpers for Vensim functions
 
 | Function | Vensim equivalent |
@@ -77,7 +85,7 @@ former `backend="ode"`.  Models written with `@equations`, or translated with
 | `pysd_step(t, height, step_time)` | `STEP` |
 | `PythonMath.exp(x)`, `PythonMath.log(x)`, `PythonMath.sin(x)`, … | `EXP`, `LN`, `SIN`, … with Python PySD's digits |
 | `PythonMath.log(x) / PythonMath.log(base)` | `LOG` |
-| `trunc(x)`; in ModelingToolkit equations `ifelse(x < 0, ceil(x), floor(x))`, as Symbolics has no symbolic `trunc` | `INTEGER` |
+| `trunc(x)`; in ModelingToolkit equations `ifelse(x < 0, ceil(x), floor(x))`, as Symbolics can't truncate a symbolic value (Symbolics 7's `trunc` of one throws) | `INTEGER` |
 | `pysd_logical_and(a, b)`, `pysd_logical_or(a, b)`, `pysd_logical_not(a)` | `:AND:`, `:OR:`, `:NOT:` |
 | `pysd_random_0_1()`, `pysd_random_uniform(…)`, `pysd_random_normal(…)`, `pysd_random_exponential(…)` | the `RANDOM` functions (a new number at every evaluation) |
 | `pysd_vector_sort_order`, `pysd_vector_rank`, `pysd_vector_reorder` | the `VECTOR` functions |

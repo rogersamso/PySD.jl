@@ -6,7 +6,7 @@
 """
     pysd_export_latex(sys; filename=nothing)
 
-Render a ModelingToolkit `ODESystem` as LaTeX equations.
+Render a ModelingToolkit system as LaTeX equations.
 
 If `filename` is given the LaTeX string is written to that file (wrapped in a
 minimal document preamble so it can be compiled standalone).  The raw LaTeX
