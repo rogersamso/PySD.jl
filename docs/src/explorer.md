@@ -58,6 +58,31 @@ them up: *Σ add up* on the sectors gives one line per fuel), so any slice of
 it is a couple of clicks.  Figures export as PNG or SVG, what is on screen
 as CSV, the whole page as one HTML file, and each run's complete results as
 CSV from the **Runs** tab (a row per name or element, a column per time).
+
+A run's scenario also exports as Excel files (**Excel** in the **Runs** tab,
+for a run that changed values): a zip with a copy of each workbook the run
+changed values of, its values in the cells the model reads them from (the
+named range, the cells, the rows or columns of a series), and `changes.csv`,
+which says where each value went.  Values written in the model's code have
+no cell: `changes.csv` lists them, to set in the model or in a run.  The
+files replace the model's own (or are uploaded again, as a user's version of
+them) to run the same scenario here, in Python PySD or in Vensim.  A cell
+that had a formula gets the value instead (`changes.csv` names it); other
+formulas keep their values until Excel computes them again.  A run that
+read a sheet uploaded by someone else, which you don't see, exports without
+it (`changes.csv` says so).
+
+Each run keeps what made its results: the values and tables it changed, the
+input sheets it read, and a record of the model that ran it (the SHA-256 of
+each of its code and Excel files, and the PySD.jl version).  **Scenario** in
+the **Runs** tab downloads that as a zip: `scenario.json`, and the workbooks
+it read that aren't the model's own (uploads, files of `input_dirs`).
+**Load a scenario**, in the New run form, takes that zip (or the Excel one,
+which carries it too) and fills the form with it: its workbooks become your
+uploads, or are found among the files you already see.  A note says what
+differs: another version of the model (which files changed), another
+PySD.jl, values that are no longer parameters, sheets left out.  An upload
+stays while a run that read it is kept: delete those runs first.
 The columns side by side (the tree of names, the two halves of a tab) widen
 or narrow by dragging the line between them; a double-click puts them back.
 
@@ -116,7 +141,7 @@ volume, mounted at `/data`):
 | `users.json` | users, administrators, password hashes |
 | `sessions.json` | logins (hashes of their tokens) |
 | `settings.json` | the Admin tab's limits, once changed |
-| `runs/` | a run each: `<id>.json` (who, label, parameters, sheets) and `<id>.f64` (its values) |
+| `runs/` | a run each: `<id>.json` (who, label, parameters, sheets, the model that ran it) and `<id>.f64` (its values) |
 | `analyses/` | a sensitivity analysis each, its table |
 | `inputs/` | uploaded Excel files, and a `.json` each (who, which file it replaces, its sheets) |
 | `views/<user>/` | each user's saved views |
@@ -192,6 +217,9 @@ done, the message says why), 401 (log in first), 403 (not allowed), 404
 | `POST /api/runs` | a run: `{"label": …, "params": {…}, "inputs": {…}}`; answers its job |
 | `GET /api/runs` | the runs you see: id, label, owner, shared, created, params, inputs, seconds |
 | `GET /api/runs/{id}/csv` | its results as CSV (text): a row per name or element, a column per time, after a line with its label and changes |
+| `GET /api/runs/{id}/excel` | its scenario as Excel files (a zip): the workbooks with its values in their cells, `changes.csv` and `README.txt` |
+| `GET /api/runs/{id}/scenario` | its scenario (a zip): `scenario.json`, the workbooks it read that aren't the model's, `README.txt` |
+| `POST /api/scenario` | a scenario's zip as the body: `{label, params, inputs, notes}` for a run (its workbooks uploaded) |
 | `GET /api/series?name=…&runs=id1,id2` | a name's values in some runs: `time`, `elements`, and for each run a list per element |
 | `PATCH /api/runs/{id}` | `{"label": …}` or `{"shared": true}` |
 | `DELETE /api/runs/{id}` | deletes it |

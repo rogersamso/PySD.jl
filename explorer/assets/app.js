@@ -164,6 +164,8 @@ function wire() {
   $("#password-form").addEventListener("submit", changePassword);
   $("#new-user").addEventListener("submit", addUser);
   $("#upload-form").addEventListener("submit", uploadSheet);
+  $("#scenario-load").addEventListener("click", () => $("#scenario-file").click());
+  $("#scenario-file").addEventListener("change", loadScenario);
   $("#secret-copy").addEventListener("click", () => navigator.clipboard.writeText($("#secret-value").textContent).then(() => toast("Copied.")));
   $("#secret-close").addEventListener("click", () => { $("#secret-value").textContent = ""; $("#dlg-secret").close(); });
   $("#sens-top").addEventListener("change", renderSens);
@@ -721,6 +723,14 @@ function renderRunsTable() {
         el("button", { class: "ghost", title: "Start a new run from this one's changes", onclick: () => editFrom(r) }, "Edit copy"),
         el("a", { class: "button ghost", href: "api/runs/" + encodeURIComponent(r.id) + "/csv", download: "",
           title: "All its results, a row per name (or element), a column per time" }, "CSV"),
+        el("button", { class: "ghost static-hide",
+          title: "What it changed, the sheets it read and the model that ran it (a .zip): keep it, or load it again",
+          onclick: (e) => exportZip(r, e.currentTarget, "scenario", "Saving the scenario…",
+            "Downloaded: load it again with \u201cLoad a scenario\u201d.") }, "Scenario"),
+        Object.keys(r.params || {}).length ? el("button", { class: "ghost static-hide",
+          title: "Its scenario: copies of the Excel files it read, with its values in their cells (a .zip)",
+          onclick: (e) => exportZip(r, e.currentTarget, "excel", "Writing the Excel files…",
+            "Downloaded: see changes.csv in the zip for what went where.") }, "Excel") : null,
         own && r.owner !== "" ? el("button", { class: "ghost", title: r.shared ? "Only you will see it" : "Everyone will see it",
           onclick: () => changeRun(r, { shared: !r.shared }) }, r.shared ? "Unshare" : "Share") : null,
         own ? el("button", { class: "ghost", title: "Rename", onclick: () => renameRun(r) }, "Rename") : null,
@@ -731,11 +741,50 @@ async function changeRun(r, change) {
   try { Object.assign(r, await api("PATCH", "runs/" + encodeURIComponent(r.id), change)); renderRunChips(); renderRunsTable(); }
   catch (e) { toast(e.message); }
 }
-function editFrom(r) {
+function editFrom(r, label = r.label + " (copy)") {
   S.edits = new Map(Object.entries(r.params || {}));
   S.inputs = { ...(r.inputs || {}) };
-  $("#run-label").value = r.label + " (copy)";
+  $("#run-label").value = label;
+  $("#scenario-notes").hidden = true;
   renderInputs(); renderParams(); renderChanged();
+}
+// a run's scenario, or its Excel files: a zip from the server (an error as a message)
+async function exportZip(r, button, kind, busy, done) {
+  button.disabled = true;
+  toast(busy, 60000);
+  try {
+    const res = await fetch("api/runs/" + encodeURIComponent(r.id) + "/" + kind, { headers: { "X-PySD-Request": "1" } });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      if (res.status === 401 && j.login) { showLogin(); throw new Error("Log in first."); }
+      throw new Error(j.error || res.statusText);
+    }
+    download(fileName(r.label) + (kind === "scenario" ? " (scenario)" : "") + ".zip", await res.blob());
+    toast(done);
+  } catch (e) { toast(e.message); }
+  finally { button.disabled = false; }
+}
+// a scenario's zip into the New run form (its workbooks become the user's uploads)
+async function loadScenario() {
+  const file = $("#scenario-file").files[0];
+  $("#scenario-file").value = "";
+  if (!file) return;
+  $("#scenario-load").disabled = true;
+  toast("Loading the scenario…", 60000);
+  try {
+    const res = await fetch("api/scenario", { method: "POST", body: await file.arrayBuffer(),
+      headers: { "X-PySD-Request": "1", "Content-Type": "application/octet-stream" } });
+    const j = await res.json().catch(() => ({}));
+    if (res.status === 401 && j.login) { showLogin(); throw new Error("Log in first."); }
+    if (!res.ok) throw new Error(j.error || res.statusText);
+    await refreshInputs();
+    editFrom(j, j.label);
+    const notes = $("#scenario-notes");
+    notes.replaceChildren(`Loaded "${j.label}".`, ...j.notes.map((n) => el("span", {}, el("br"), "• " + n)));
+    notes.hidden = false;
+    toast(`"${j.label}" is in the form: check it, then Run.`, 6000);
+  } catch (e) { toast("The scenario can't be loaded: " + e.message, 8000); }
+  finally { $("#scenario-load").disabled = false; }
 }
 async function renameRun(r) {
   const label = prompt("New name:", r.label);
@@ -1395,7 +1444,7 @@ async function changeUpload(u, change) {
   try { await api("PATCH", "uploads/" + encodeURIComponent(u.id), change); await refreshInputs(); } catch (x) { toast(x.message); }
 }
 async function deleteUpload(u) {
-  if (!confirm(`Delete "${u.label}"? Runs made with it keep their results.`)) return;
+  if (!confirm(`Delete "${u.label}"?`)) return;
   try {
     await api("DELETE", "uploads/" + encodeURIComponent(u.id));
     for (const [k, id] of Object.entries(S.inputs)) if (id.includes(u.id)) delete S.inputs[k];

@@ -4,6 +4,31 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
+## Unreleased
+
+### Added
+
+- PySDExplorer: a run's scenario as Excel files (**Excel** in the Runs tab,
+  `GET /api/runs/{id}/excel`): copies of the workbooks it read, with its
+  values and tables in the cells the model reads them from, and
+  `changes.csv`, what went where and what is written in the model's code
+  instead.  They run the same scenario in the explorer (uploaded), in
+  Python PySD or in Vensim.
+- PySDExplorer: a run's scenario as a file to keep and load again
+  (**Scenario** in the Runs tab, `GET /api/runs/{id}/scenario`): a zip with
+  `scenario.json` (the values and tables it changed, the input sheets it
+  read, the model's files' SHA-256 and the PySD.jl version that ran it) and
+  the uploaded workbooks it read.  **Load a scenario** (`POST /api/scenario`)
+  fills the New run form with one, uploads its workbooks (or finds them among
+  yours) and says what differs: another version of the model, values that
+  are no longer parameters.  The Excel download carries it too.
+
+### Changed
+
+- PySDExplorer: each run keeps a record of the model that ran it (its files'
+  SHA-256, the PySD.jl version), and an uploaded file can't be deleted while
+  a run that read it is kept.
+
 ## 0.12.0 (2026-11-11)
 
 ### Added
