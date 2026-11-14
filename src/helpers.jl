@@ -309,7 +309,10 @@ function _vector_select_symbolic(sel, expr, missing_vals, action)
     smallest(v) = minimum(ifelse(nz[i], v[i], Inf) for i in eachindex(v))
     largest(v) = maximum(ifelse(nz[i], v[i], -Inf) for i in eachindex(v))
     function by_action(k)
-        v = k <= 4 ? S .* E : k == 5 ? E .^ S : E
+        # every action is built, also those not taken: pysd_power gives NaN
+        # for a negative base and a fractional exponent (as numpy) where
+        # Julia's ^ of the numbers would throw
+        v = k <= 4 ? S .* E : k == 5 ? pysd_power.(E, S) : E
         k in (0, 6) && return total(v)
         k in (1, 5, 7) && return product(v)
         k in (2, 8) && return smallest(v)

@@ -504,6 +504,9 @@ end
     @test at.(pysd_vector_reorder([10.0, 20.0, 30.0], collect(v) .- 1)) == [30.0, 10.0, 30.0]
     @test at(pysd_vector_select([1, 0, 1], collect(v), -1.0, 0, 0)) == 6.0
     @test symbolic_at(pysd_vector_select([1, 0, 1], [1.0, 2.0, 3.0], -1.0, a, 0), a => 9) == 3.0
+    # all the actions are built: expr ^ sel (action 5) of a negative number and a
+    # fractional selection is NaN, as numpy, not an error
+    @test symbolic_at(pysd_vector_select([0.5, 1.0], [-1.0, 2.0], -1.0, a, 0), a => 6) == 1.0
     # the DSL (and PySD by itself) don't load Symbolics
     code = "using PySD; exit(isnothing(Base.get_extension(PySD, :PySDSymbolicsExt)) &&
             !any(m -> nameof(m) === :Symbolics, values(Base.loaded_modules)) ? 0 : 1)"
