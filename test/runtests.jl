@@ -46,8 +46,12 @@ Base.getindex(s::FakeSol, i::Int, ::Colon) = [u[i] for u in s.u]
 # no type piracy (methods only on PySD's own functions or types), no method
 # ambiguities, compat bounds for every dependency, no stale dependencies, …
 @testset "Aqua" begin
-    # the test-only packages: the CI job with the oldest versions lists them as dependencies
-    Aqua.test_all(PySD; stale_deps = (; ignore = [:Aqua, :ForwardDiff, :Measurements, :OrdinaryDiffEqLowOrderRK]))
+    # the test-only packages: the CI job with the oldest versions lists them as
+    # dependencies, and so the weak dependencies the tests load (which PySD by
+    # itself doesn't, now that Symbolics, which loaded SciMLBase and Latexify,
+    # is one of them)
+    Aqua.test_all(PySD; stale_deps = (; ignore = [:Aqua, :ForwardDiff, :Measurements, :OrdinaryDiffEqLowOrderRK,
+                                                  :Latexify, :SciMLBase, :Symbolics]))
 end
 
 @testset "check_compat" begin
