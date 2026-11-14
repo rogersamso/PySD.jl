@@ -4,7 +4,7 @@ What changes in each version, newest first.  Each version's
 [release](https://github.com/rogersamso/PySD.jl/releases) has the full notes
 and the tests run before it.
 
-## Unreleased
+## 0.13.0 (2026-11-14)
 
 ### Added
 
@@ -28,6 +28,11 @@ and the tests run before it.
 - PySDExplorer: each run keeps a record of the model that ran it (its files'
   SHA-256, the PySD.jl version), and an uploaded file can't be deleted while
   a run that read it is kept.
+- `explorer/deploy/`: browser security headers in the Caddyfile (HSTS, a
+  Content-Security-Policy, no framing); `caddy:2`, so a pull brings Caddy's
+  fixes; the README says how to update the containers.
+- PySD.jl: the Excel reader's cell lookups are shared with the explorer's
+  export (no change in what is read).
 
 ## 0.12.0 (2026-11-11)
 
